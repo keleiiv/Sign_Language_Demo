@@ -13,7 +13,7 @@ Controls:
     Q     — quit
 
 Run:
-    venv312\\Scripts\\python.exe sentence_builder.py
+    .venv\\Scripts\\python.exe scripts\\sentence_builder.py
 """
 
 import queue
@@ -32,6 +32,18 @@ from gtts import gTTS
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision as mv
 from tensorflow.keras.models import load_model
+if __package__:
+    from scripts.sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        extract_frame_features,
+    )
+else:
+    from sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        extract_frame_features,
+    )
 
 # ── Groq API ──────────────────────────────────────────────────────────────────
 import os
@@ -121,22 +133,6 @@ ROOT           = Path(__file__).parent.parent   # project root (one level up fro
 HOLISTIC_MODEL = str(ROOT / "mediapipe_models" / "holistic_landmarker.task")
 KERAS_MODEL    = str(ROOT / "models" / "isl_model_solo.keras")
 FEATURES_DIR   = ROOT / "data" / "extracted_features"
-
-# ── Feature constants (must match personal_collector.py) ─────────────────────
-MAX_FRAMES = 30
-POSE_DIM   = 33 * 4
-
-FACE_KEY_INDICES = [
-    70, 63, 105, 66, 107, 55, 65, 52,
-    300, 293, 334, 296, 336, 285, 295, 282,
-    33, 133, 159, 145,
-    362, 263, 386, 374,
-    61, 37,   0, 267, 291, 321, 314,  17,
-    78, 81,  13, 311, 308, 317,  14,  87,
-]
-FACE_DIM     = len(FACE_KEY_INDICES) * 3
-HAND_DIM     = 21 * 3
-KEYPOINT_DIM = POSE_DIM + FACE_DIM + HAND_DIM * 2
 
 # ── Sentence builder parameters ───────────────────────────────────────────────
 CONFIDENCE_THRESHOLD = 0.60   # min confidence to count a prediction
@@ -255,35 +251,8 @@ def build_holistic():
     return mv.HolisticLandmarker.create_from_options(options)
 
 
-# ── Feature extraction ────────────────────────────────────────────────────────
-
-def _wrist_relative(lm_list) -> np.ndarray:
-    coords = np.array([[lm.x, lm.y, lm.z] for lm in lm_list], dtype=np.float32)
-    coords -= coords[0]
-    return coords.flatten()
-
 def extract_keypoints(result) -> np.ndarray:
-    pose = np.array(
-        [[lm.x, lm.y, lm.z, lm.visibility] for lm in result.pose_landmarks],
-        dtype=np.float32,
-    ).flatten() if result.pose_landmarks else np.zeros(POSE_DIM, dtype=np.float32)
-
-    if result.face_landmarks and len(result.face_landmarks) > max(FACE_KEY_INDICES):
-        lms  = result.face_landmarks
-        nose = np.array([lms[1].x, lms[1].y, lms[1].z], dtype=np.float32)
-        pts  = np.array([[lms[i].x, lms[i].y, lms[i].z]
-                          for i in FACE_KEY_INDICES], dtype=np.float32)
-        pts -= nose
-        face = pts.flatten()
-    else:
-        face = np.zeros(FACE_DIM, dtype=np.float32)
-
-    lh = _wrist_relative(result.left_hand_landmarks) \
-        if result.left_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-    rh = _wrist_relative(result.right_hand_landmarks) \
-        if result.right_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-
-    return np.concatenate([pose, face, lh, rh])
+    return extract_frame_features(result)
 
 
 # ── UI helpers ────────────────────────────────────────────────────────────────

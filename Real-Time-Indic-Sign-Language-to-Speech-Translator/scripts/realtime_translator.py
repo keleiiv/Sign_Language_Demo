@@ -8,7 +8,7 @@ Controls:
     q — quit
 
 Run:
-    venv312\\Scripts\\python.exe realtime_translator.py
+    .venv\\Scripts\\python.exe scripts\\realtime_translator.py
 """
 
 from collections import deque
@@ -20,28 +20,24 @@ import numpy as np
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision as mv
 from tensorflow.keras.models import load_model
+if __package__:
+    from scripts.sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        extract_frame_features,
+    )
+else:
+    from sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        extract_frame_features,
+    )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT           = Path(__file__).parent
-HOLISTIC_MODEL = str(ROOT / "holistic_landmarker.task")
+ROOT           = Path(__file__).resolve().parents[1]
+HOLISTIC_MODEL = str(ROOT / "mediapipe_models" / "holistic_landmarker.task")
 KERAS_MODEL    = str(ROOT / "models" / "isl_model_solo.keras")
 FEATURES_DIR   = ROOT / "data" / "extracted_features"
-
-# ── Constants (must match personal_collector.py exactly) ──────────────────────
-MAX_FRAMES   = 30
-POSE_DIM     = 33 * 4    # 132
-
-FACE_KEY_INDICES = [
-    70, 63, 105, 66, 107, 55, 65, 52,        # left eyebrow
-    300, 293, 334, 296, 336, 285, 295, 282,   # right eyebrow
-    33, 133, 159, 145,                         # left eye
-    362, 263, 386, 374,                        # right eye
-    61, 37,   0, 267, 291, 321, 314,  17,     # outer mouth
-    78, 81,  13, 311, 308, 317,  14,  87,     # inner mouth
-]
-FACE_DIM     = len(FACE_KEY_INDICES) * 3   # 120
-HAND_DIM     = 21 * 3    # 63
-KEYPOINT_DIM = POSE_DIM + FACE_DIM + HAND_DIM * 2  # 378
 
 CONFIDENCE_THRESHOLD = 0.50   # lower for diagnostics — see everything the model thinks
 
@@ -94,40 +90,7 @@ def _wrist_relative(lm_list) -> np.ndarray:
 # ── Feature extraction ────────────────────────────────────────────────────────
 
 def extract_keypoints(result: mv.HolisticLandmarkerResult) -> np.ndarray:
-    """
-    Build the 1692-float feature vector.
-    Hands use wrist-relative normalization.
-    Pose and face are left as absolute (they provide body context).
-    """
-    # Pose — absolute (132)
-    if result.pose_landmarks:
-        pose = np.array(
-            [[lm.x, lm.y, lm.z, lm.visibility] for lm in result.pose_landmarks],
-            dtype=np.float32,
-        ).flatten()
-    else:
-        pose = np.zeros(POSE_DIM, dtype=np.float32)
-
-    # Face — 40 key points, nose-relative (120)
-    if result.face_landmarks and len(result.face_landmarks) > max(FACE_KEY_INDICES):
-        lms  = result.face_landmarks
-        nose = np.array([lms[1].x, lms[1].y, lms[1].z], dtype=np.float32)
-        pts  = np.array([[lms[i].x, lms[i].y, lms[i].z]
-                          for i in FACE_KEY_INDICES], dtype=np.float32)
-        pts -= nose
-        face = pts.flatten()
-    else:
-        face = np.zeros(FACE_DIM, dtype=np.float32)
-
-    # Left hand — wrist-relative (63)
-    lh = _wrist_relative(result.left_hand_landmarks) \
-        if result.left_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-
-    # Right hand — wrist-relative (63)
-    rh = _wrist_relative(result.right_hand_landmarks) \
-        if result.right_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-
-    return np.concatenate([pose, face, lh, rh])
+    return extract_frame_features(result)
 
 
 # ── UI ────────────────────────────────────────────────────────────────────────

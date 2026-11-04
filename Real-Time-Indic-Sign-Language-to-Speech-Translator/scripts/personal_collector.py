@@ -4,7 +4,7 @@ personal_collector.py — Record a personalised ISL dataset for fine-tuning.
 For each of the 50 target words this script:
   1. Plays the first raw reference video on a loop so you can learn the sign.
   2. Opens your webcam and records 10 × 30-frame landmark sequences.
-  3. Applies wrist-relative normalisation and saves (30, 1692) .npy arrays
+  3. Applies v1 preprocessing and saves (30, 378) .npy arrays
      directly to  data/personal_features/<Word>/seq_NNNN.npy
 
 Controls (during tutorial):
@@ -18,7 +18,7 @@ Controls (during webcam / recording):
     Q — quit
 
 Run:
-    venv312\\Scripts\\python.exe personal_collector.py
+    .venv\\Scripts\\python.exe scripts\\personal_collector.py
 """
 
 import re
@@ -30,30 +30,28 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision as mv
+if __package__:
+    from scripts.sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        PREPROCESSING_VERSION,
+        build_sequence,
+        extract_frame_features,
+    )
+else:
+    from sequence_contract import (
+        FEATURE_DIM as KEYPOINT_DIM,
+        MAX_FRAMES,
+        PREPROCESSING_VERSION,
+        build_sequence,
+        extract_frame_features,
+    )
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT         = Path(__file__).parent
+ROOT         = Path(__file__).resolve().parents[1]
 RAW_DIR      = ROOT / "data" / "raw"
 OUT_DIR      = ROOT / "data" / "personal_features"
-HOLISTIC_MODEL = str(ROOT / "holistic_landmarker.task")
-
-# ── Feature dimensions ────────────────────────────────────────────────────────
-MAX_FRAMES   = 30
-POSE_DIM     = 33 * 4    # 132
-
-# 40 face key-points relevant to sign language (eyebrows, eyes, mouth).
-# Nose-tip (landmark 1) is used as origin — not included in output.
-FACE_KEY_INDICES = [
-    70, 63, 105, 66, 107, 55, 65, 52,        # left eyebrow
-    300, 293, 334, 296, 336, 285, 295, 282,   # right eyebrow
-    33, 133, 159, 145,                         # left eye
-    362, 263, 386, 374,                        # right eye
-    61, 37,   0, 267, 291, 321, 314,  17,     # outer mouth
-    78, 81,  13, 311, 308, 317,  14,  87,     # inner mouth
-]
-FACE_DIM     = len(FACE_KEY_INDICES) * 3   # 120
-HAND_DIM     = 21 * 3    # 63
-KEYPOINT_DIM = POSE_DIM + FACE_DIM + HAND_DIM * 2  # 378
+HOLISTIC_MODEL = str(ROOT / "mediapipe_models" / "holistic_landmarker.task")
 
 SEQUENCES_PER_WORD = 20
 PAUSE_EVERY        = 5    # pause after this many sequences so you can change lighting
@@ -135,39 +133,8 @@ def build_holistic() -> mv.HolisticLandmarker:
     return mv.HolisticLandmarker.create_from_options(options)
 
 
-# ── Feature extraction with wrist-relative normalisation ──────────────────────
-
-def _wrist_relative(lm_list) -> np.ndarray:
-    coords = np.array([[lm.x, lm.y, lm.z] for lm in lm_list], dtype=np.float32)
-    coords -= coords[0]          # wrist → (0,0,0); all fingers relative to wrist
-    return coords.flatten()
-
-
 def extract_keypoints(result: mv.HolisticLandmarkerResult) -> np.ndarray:
-    if result.pose_landmarks:
-        pose = np.array(
-            [[lm.x, lm.y, lm.z, lm.visibility] for lm in result.pose_landmarks],
-            dtype=np.float32,
-        ).flatten()
-    else:
-        pose = np.zeros(POSE_DIM, dtype=np.float32)
-
-    if result.face_landmarks and len(result.face_landmarks) > max(FACE_KEY_INDICES):
-        lms  = result.face_landmarks
-        nose = np.array([lms[1].x, lms[1].y, lms[1].z], dtype=np.float32)
-        pts  = np.array([[lms[i].x, lms[i].y, lms[i].z]
-                          for i in FACE_KEY_INDICES], dtype=np.float32)
-        pts -= nose   # nose-relative: expression shape, not position
-        face = pts.flatten()
-    else:
-        face = np.zeros(FACE_DIM, dtype=np.float32)
-
-    lh = _wrist_relative(result.left_hand_landmarks) \
-        if result.left_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-    rh = _wrist_relative(result.right_hand_landmarks) \
-        if result.right_hand_landmarks else np.zeros(HAND_DIM, dtype=np.float32)
-
-    return np.concatenate([pose, face, lh, rh])
+    return extract_frame_features(result)
 
 
 # ── Overlay helpers ───────────────────────────────────────────────────────────
@@ -309,7 +276,9 @@ def recording_phase(
 
             if len(current_frames) == MAX_FRAMES:
                 # save sequence
-                seq_array = np.array(current_frames, dtype=np.float32)  # (30, 1692)
+                seq_array = build_sequence(
+                    current_frames, PREPROCESSING_VERSION
+                )
                 save_path = out_dir / f"seq_{next_idx:04d}.npy"
                 np.save(str(save_path), seq_array)
                 seqs_recorded += 1

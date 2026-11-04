@@ -1,0 +1,37 @@
+# Local environments and credentials
+.venv/
+venv/
+venv312/
+env/
+node_modules/
+.env
+.env.*
+!.env.example
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local diff-stat snapshot
+/-files models mediapipe_models
+
+# Downloaded ISL dataset (keep source data local)
+/Indian-Sign-Language.v1i.yolov8.zip
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/train/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/valid/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/test/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/data.yaml
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/README.dataset.txt
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/README.roboflow.txt
+
+# Experimental YOLOv8 prepared data and generated training artifacts
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/experimental/yolov8/prepared/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/experimental/yolov8/runs/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/experimental/yolov8/weights/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/experimental/yolov8/reports/
+/Real-Time-Indic-Sign-Language-to-Speech-Translator/data/vocabulary_drafts/

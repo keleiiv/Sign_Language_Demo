@@ -11,7 +11,7 @@ Only original seq_* files are augmented; running the script twice is safe
 because aug* files are ignored automatically.
 
 Run:
-    venv312\\Scripts\\python.exe augment_personal_data.py
+    .venv\\Scripts\\python.exe scripts\\augment_personal_data.py
 """
 
 from pathlib import Path
@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT         = Path(__file__).parent
+ROOT         = Path(__file__).resolve().parents[1]
 PERSONAL_DIR = ROOT / "data" / "personal_features"
 
 # ── Augmentation parameters ───────────────────────────────────────────────────
@@ -169,7 +169,7 @@ def main() -> None:
 
         word_new = 0
         for seq_path in orig_files:
-            seq = np.load(str(seq_path))            # (30, 1692)
+            seq = np.load(str(seq_path))            # (30, 378), live-model v1
 
             for tag, fn in AUGMENTATIONS:
                 out_name = f"{tag}_{seq_path.name}"   # e.g. aug1_seq_0000.npy
@@ -194,7 +194,10 @@ def main() -> None:
     print(f"Newly created     : {newly_created}")
     print(f"Total after       : {total_after}")
     print(f"Per-class average : {total_after / len(word_dirs):.0f} sequences")
-    print(f"\nNext step: retrain with  venv312\\Scripts\\python.exe -u train_personal_only.py")
+    print(
+        "\nNext step: retrain with  .venv\\Scripts\\python.exe "
+        "scripts\\train_personal_only.py"
+    )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ Phase 1 : Same signer (model creator) — 48/50 words correct (live demo)
 Phase 2 : 6 unknown signers — word counts provided manually
 
 Run:
-    venv312\\Scripts\\python.exe evaluation_report.py
+    .venv\\Scripts\\python.exe scripts\\evaluation_report.py
 """
 
 import numpy as np
@@ -20,7 +20,7 @@ from sklearn.metrics import confusion_matrix, classification_report
 from tensorflow.keras.models import load_model
 
 # ── Config ────────────────────────────────────────────────────────────────────
-ROOT         = Path(".")
+ROOT         = Path(__file__).resolve().parents[1]
 PERSONAL_DIR = ROOT / "data" / "personal_features"
 FEATURES_DIR = ROOT / "data" / "extracted_features"
 MODEL_PATH   = ROOT / "models" / "isl_model_solo.keras"

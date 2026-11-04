@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Developer Studio | ISL Translator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="developer.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="page-header">
+      <a class="back-link" href="/">← Return to Translator</a>
+      <p class="eyebrow">LOCAL DEVELOPER WORKSPACE</p>
+      <h1>Developer Studio</h1>
+      <p class="intro">Build a careful vocabulary dataset by recording and reviewing landmark sequences. Saving examples does not train, validate, activate, or publish a model.</p>
+      <div class="notice" role="note">
+        This page is restricted to localhost. Add and save examples here; then explicitly train a candidate, evaluate it on independent sessions, and activate it only after validation. Allow camera access when prompted, and stop other webcam capture first.
+      </div>
+    </header>
+
+    <section class="workspace" aria-label="Vocabulary capture workspace">
+      <div class="capture-column">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">1 / VOCABULARY ENTRY</p>
+              <h2>Start or resume a draft</h2>
+            </div>
+            <span class="contract-tag">30 × 378 · v1</span>
+          </div>
+          <form id="draftForm" class="draft-form">
+            <label for="wordLabel">Canonical word label</label>
+            <input id="wordLabel" name="label" maxlength="80" required autocomplete="off" placeholder="For example, Fish">
+            <label for="scopeSelect">Storage scope</label>
+            <select id="scopeSelect" name="scope">
+              <option value="shared">Shared vocabulary (developer review required before distribution)</option>
+              <option value="personal">Personal examples (never included in shared exports)</option>
+            </select>
+            <button class="button button-primary" type="submit">Create / resume draft</button>
+          </form>
+          <p id="draftMessage" class="status-message" aria-live="polite"></p>
+        </section>
+
+        <section class="panel camera-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">2 / CAPTURE</p>
+              <h2>Record one complete sequence</h2>
+            </div>
+            <span id="cameraState" class="state-chip">Camera off</span>
+          </div>
+          <div class="video-frame">
+            <video id="cameraPreview" autoplay playsinline muted></video>
+            <div id="videoPlaceholder" class="video-placeholder">Your local camera preview appears here</div>
+          </div>
+          <div class="capture-controls">
+            <button id="startCamera" class="button button-secondary" type="button">Enable camera</button>
+            <button id="captureButton" class="button button-primary" type="button" disabled>Capture 30 frames</button>
+            <button id="stopCamera" class="button button-quiet" type="button" disabled>Stop camera</button>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-label"><span id="progressText">Waiting for camera</span><span id="progressCount">0 / 30</span></div>
+            <progress id="captureProgress" max="30" value="0">0 of 30</progress>
+          </div>
+          <p id="captureMessage" class="status-message" aria-live="polite"></p>
+        </section>
+
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">3 / REVIEW & SAVE</p>
+              <h2>Pending examples</h2>
+            </div>
+            <span id="pendingCount" class="count-pill">0</span>
+          </div>
+          <div id="pendingSamples" class="sample-list empty-state">Capture a sequence to review it here.</div>
+          <button id="saveDraft" class="button button-primary save-button" type="button" disabled>Save accepted examples to draft</button>
+          <p class="privacy-note">Only landmark sequences are saved. Camera frames are used temporarily for capture and review; they are not stored.</p>
+        </section>
+      </div>
+
+      <aside class="draft-column">
+        <section class="panel draft-list-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">DRAFT LIBRARY</p>
+              <h2>Saved collection drafts</h2>
+            </div>
+            <button id="refreshDrafts" class="icon-button" type="button" aria-label="Refresh drafts">↻</button>
+          </div>
+          <p class="muted">Select a draft to resume capture. Shared and personal counts stay separate.</p>
+          <div id="draftList" class="draft-list empty-state">Loading drafts…</div>
+        </section>
+        <section class="panel saved-panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">CURRENT DRAFT</p>
+              <h2 id="activeDraftTitle">No draft selected</h2>
+            </div>
+          </div>
+          <p id="activeDraftMeta" class="muted">Create a draft or select one from the list.</p>
+          <div class="session-controls">
+            <p id="activeSessionMeta" class="muted">Select a draft to see its recording session.</p>
+            <button id="newSession" class="button button-secondary" type="button" disabled>Start New Session</button>
+          </div>
+          <p class="privacy-note">A new session adds independent recordings to this word. It does not delete or overwrite existing samples.</p>
+          <div id="savedSamples" class="sample-list empty-state">Saved examples appear here after reopening a draft.</div>
+          <button id="deleteSavedSamples" class="button button-danger save-button" type="button" disabled>Delete selected saved examples</button>
+          <p class="privacy-note">Deletion is permanent. The selected examples only are removed; the draft and its other examples remain.</p>
+        </section>
+      </aside>
+    </section>
+    <section class="panel training-lab" aria-labelledby="trainingLabHeading">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">4 / MODEL MANAGEMENT</p>
+          <h2 id="trainingLabHeading">Training Lab</h2>
+        </div>
+        <label for="trainingScope">Scope</label>
+        <select id="trainingScope">
+          <option value="shared">Shared</option>
+          <option value="personal">Personal</option>
+        </select>
+        <button id="refreshTrainingLab" class="button button-secondary" type="button">Refresh model state</button>
+      </div>
+      <p class="muted">Saving samples updates the dataset only. Training creates a separate candidate; activation is allowed only when it matches the complete current vocabulary and saved data and has a complete session-separated confusion report.</p>
+      <p id="trainingLabStatus" class="status-message" role="status" aria-live="polite">Loading saved vocabulary and model state…</p>
+      <div id="trainingVocabulary" class="sample-list"></div>
+      <div class="capture-controls">
+        <button id="trainModelCandidate" class="button button-primary" type="button" disabled>Train candidate from saved sequences</button>
+        <label for="trainingCandidate">Candidate artifact</label>
+        <select id="trainingCandidate" disabled>
+          <option value="">No candidates yet</option>
+        </select>
+        <button id="activateModelCandidate" class="button button-secondary" type="button" disabled>Activate validated candidate</button>
+      </div>
+      <p id="trainingCandidateStatus" class="status-message" role="status" aria-live="polite"></p>
+    </section>
+    <footer>Preprocessing: <code>isl-holistic-30x378-v1</code> · Saving, training, validation, and activation are explicit separate steps.</footer>
+  </main>
+  <canvas id="captureCanvas" hidden></canvas>
+  <script src="developer.js"></script>
+</body>
+</html>

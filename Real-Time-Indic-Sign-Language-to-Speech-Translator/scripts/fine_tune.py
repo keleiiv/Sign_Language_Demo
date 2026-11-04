@@ -6,7 +6,7 @@ learning rate so the existing weights shift gently toward your hands, trains
 on data/personal_features/, and saves models/isl_model_finetuned.keras.
 
 Run:
-    venv312\\Scripts\\python.exe -u fine_tune.py
+    .venv\\Scripts\\python.exe -u scripts\\fine_tune.py
 """
 
 from pathlib import Path
@@ -19,7 +19,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import to_categorical
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT             = Path(__file__).parent
+ROOT             = Path(__file__).resolve().parents[1]
 PERSONAL_DIR     = ROOT / "data" / "personal_features"
 FEATURES_DIR     = ROOT / "data" / "extracted_features"   # used for label order only
 BASE_MODEL_PATH  = str(ROOT / "models" / "isl_model.keras")
@@ -53,7 +53,8 @@ def load_personal_data(
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Walk personal_features/<Word>/seq_NNNN.npy and load every sequence.
-    Each .npy must be shape (30, 1692).
+    This legacy pipeline accepts only (30, 1692) sequences. Do not mix these
+    with the live model's versioned (30, 378) feature sequences.
 
     Returns:
         X : float32  (N, 30, 1692)

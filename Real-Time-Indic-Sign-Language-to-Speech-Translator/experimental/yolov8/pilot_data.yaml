@@ -1,0 +1,15 @@
+# Portable root, resolved relative to this YAML by pilot_train.py.
+path: prepared
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 32
+names: ["Bad", "Brother", "Father", "Food", "Friend", "Good", "Hello", "Help", "House", "I", "Indian", "Loud", "Mummy", "Namaste", "Name", "No", "Place", "Please", "Quiet", "Sleeping", "Sorry", "Strong", "Thank-you", "Time", "Today", "Water", "What", "Yes", "Your", "language", "sign", "you"]
+
+roboflow:
+  workspace: ashwin-perumal-s-r
+  project: indian-sign-language-fkx1f-wlm3w-44qhl
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/ashwin-perumal-s-r/indian-sign-language-fkx1f-wlm3w-44qhl/dataset/1

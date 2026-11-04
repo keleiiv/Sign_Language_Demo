@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import cv2
 import mediapipe as mp
@@ -8,7 +9,8 @@ from mediapipe.tasks.python.vision import drawing_utils, drawing_styles
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-MODEL_PATH = "holistic_landmarker.task"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+MODEL_PATH = str(PROJECT_ROOT / "mediapipe_models" / "holistic_landmarker.task")
 
 _FACE_CONNECTIONS = mv.FaceLandmarksConnections.FACE_LANDMARKS_CONTOURS
 _POSE_CONNECTIONS = mv.PoseLandmarksConnections.POSE_LANDMARKS

@@ -11,7 +11,7 @@ Anti-overfitting measures:
   - EarlyStopping monitors val_accuracy with patience=30
 
 Run:
-    venv312\\Scripts\\python.exe -u model_training.py
+    .venv\\Scripts\\python.exe -u scripts\\model_training.py
 """
 
 from pathlib import Path
@@ -28,13 +28,15 @@ from tensorflow.keras.regularizers import l2
 from tensorflow.keras.utils import to_categorical
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[1]
 FEATURES_DIR = ROOT / "data" / "extracted_features"
 MODELS_DIR = ROOT / "models"
 MODEL_PATH = str(MODELS_DIR / "isl_model.keras")
 
 # ── Hyperparameters ───────────────────────────────────────────────────────────
 MAX_FRAMES = 30
+# Legacy full-face feature format; it is not compatible with the live model's
+# versioned 30 x 378 input contract.
 FEATURE_DIM = 1692
 TEST_SIZE = 0.20
 RANDOM_SEED = 42

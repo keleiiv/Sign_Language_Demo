@@ -2,7 +2,7 @@
 video_processor.py — Extract MediaPipe holistic landmarks from INCLUDE dataset videos.
 
 Output: data/extracted_features/<Word>/<VideoStem>/frame_NNNN.npy
-Array shape per frame: (1692,)
+Legacy array shape per frame: (1692,), distinct from the live-model v1 format.
   = pose(132) + face(1434) + left_hand(63) + right_hand(63)
   Pose   : 33 landmarks × 4 values (x, y, z, visibility)
   Face   : 478 landmarks × 3 values (x, y, z)
@@ -22,10 +22,10 @@ from mediapipe.tasks.python import vision as mv
 from tqdm import tqdm
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parents[1]
 RAW_DIR = ROOT / "data" / "raw"
 OUT_DIR = ROOT / "data" / "extracted_features"
-MODEL_PATH = str(ROOT / "holistic_landmarker.task")
+MODEL_PATH = str(ROOT / "mediapipe_models" / "holistic_landmarker.task")
 
 # ── Landmark dimension constants ──────────────────────────────────────────────
 POSE_DIM = 33 * 4    # 132

@@ -6,6 +6,11 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Virtual environments
 venv/
@@ -21,7 +26,13 @@ data/personal_features/
 data/extracted_features/**/*.npy
 !data/extracted_features/**/.gitkeep
 
-# Keep only the active model (isl_model_solo.keras is included)
+# Local model binaries. Existing tracked files remain tracked until separately
+# removed from the index; ignore rules only protect future untracked copies.
+models/*.keras
+mediapipe_models/*.task
+mediapipe_models/*.tflite
+
+# Keep legacy model outputs out of new uploads
 models/isl_model.keras
 models/isl_model_finetuned.keras
 
@@ -34,6 +45,7 @@ evaluation_charts/
 .env
 .env.local
 .env.production
+.env.*
 !.env.example
 
 # Claude Code internals
@@ -45,3 +57,28 @@ CLAUDE.md
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local JavaScript dependencies
+node_modules/
+
+# Local vocabulary drafts and recordings (not synchronized by GitHub)
+data/vocabulary_drafts/
+
+# Downloaded dataset tree and metadata
+train/
+valid/
+test/
+Indian-Sign-Language.v1i.yolov8.zip
+data.yaml
+README.dataset.txt
+README.roboflow.txt
+
+# Experimental YOLOv8 dataset and generated outputs
+experimental/yolov8/prepared/
+experimental/yolov8/runs/
+experimental/yolov8/weights/
+experimental/yolov8/reports/
+experimental/yolov8/checkpoint_*.log
+experimental/yolov8/checkpoint_*.json
+experimental/yolov8/cross_class_near_duplicate_review.csv
+experimental/yolov8/cross_class_review_*.png

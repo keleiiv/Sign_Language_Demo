@@ -1,15 +1,16 @@
 """
 train_personal_only.py — Train a fresh lightweight model on personal hand data.
 
-Data: data/personal_features/<Word>/seq_NNNN.npy  (shape 30 x 1692)
-      Recorded with wrist-relative normalisation — consistent feature space.
+Data: data/personal_features/<Word>/seq_NNNN.npy  (shape 30 x 378)
+      Uses the live-model feature shape. Existing .npy files have no embedded
+      preprocessing version and are not migrated by this script.
 
 Split strategy: originals are split into train/test FIRST, then augmented
 variants (aug*) are added ONLY to the training set. The test set contains
 only original, never-augmented sequences — giving an honest real-world metric.
 
 Run:
-    venv312\\Scripts\\python.exe -u train_personal_only.py
+    .venv\\Scripts\\python.exe -u scripts\\train_personal_only.py
 """
 
 from pathlib import Path
@@ -23,7 +24,7 @@ from tensorflow.keras.regularizers import l2
 from tensorflow.keras.utils import to_categorical
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
-ROOT         = Path(__file__).parent
+ROOT         = Path(__file__).resolve().parents[1]
 PERSONAL_DIR = ROOT / "data" / "personal_features"
 FEATURES_DIR = ROOT / "data" / "extracted_features"   # label order reference
 MODEL_PATH   = str(ROOT / "models" / "isl_model_solo.keras")

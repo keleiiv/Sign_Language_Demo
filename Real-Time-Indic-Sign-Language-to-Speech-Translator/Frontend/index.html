@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Real Time Indian Sign Language to Speech Translator</title>
+  <title>Real-Time Indian Sign Language to Speech Translator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,800;1,9..144,300;1,9..144,600;1,9..144,800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
@@ -22,36 +22,34 @@
       </div>
       <ul class="nav-links">
         <li><a href="#demo">Demo</a></li>
-        <li><a href="#features">Features</a></li>
-        <li><a href="#glossary">Signs</a></li>
-        <li><a href="#about">About</a></li>
-        <li><a href="#pipeline">Pipeline</a></li>
+        <li><a href="#how-it-works">How it works</a></li>
+        <li><a href="#progress">Project progress</a></li>
       </ul>
       <button class="hamburger" id="hamburger"><span></span><span></span><span></span></button>
     </div>
     <div class="mobile-nav" id="mobileNav">
       <a href="#demo">Demo</a>
-      <a href="#features">Features</a>
-      <a href="#glossary">Signs</a>
-      <a href="#about">About</a>
-      <a href="#pipeline">Pipeline</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#progress">Project progress</a>
     </div>
   </nav>
 
   <!-- ── HERO ── -->
   <section class="hero">
     <div class="hero-inner">
+      <p class="hero-eyebrow anim-1">A local, evolving ISL project</p>
       <h1 class="hero-title anim-2">
-        Real Time Indian<br />Sign Language<br />
+        Real-Time Indian<br />Sign Language<br />
         <em>to Speech Translator</em>
       </h1>
       <p class="hero-sub anim-3">
-        50 signs. 7 Indian languages. One camera.<br />
-        Powered by MediaPipe &amp; BiLSTM deep learning.
+        Recognize a small set of signs, review them as an ordered sequence, and
+        request an optional local sentence suggestion. New vocabulary examples
+        are saved separately and require explicit model training and validation.
       </p>
       <div class="hero-btns anim-4">
-        <a href="#demo" class="btn-primary">Open the Canvas</a>
-        <a href="#about" class="btn-outline">Learn More</a>
+        <a href="#demo" class="btn-primary">Open the live demo</a>
+        <a href="#how-it-works" class="btn-outline">How it works</a>
       </div>
     </div>
 
@@ -176,14 +174,17 @@
   <!-- ── DEMO ── -->
   <section class="demo-section" id="demo">
     <div class="section-label">✦ Live Demo</div>
-    <h2 class="section-heading">The <em>canvas</em> is live.</h2>
+    <h2 class="section-heading">Try the <em>sign demo.</em></h2>
+    <p class="demo-intro">Choose the active validated sequence model when available, or the limited five-sign Browser KNN fallback. Start the camera once, then review a sequence before requesting a sentence suggestion.</p>
 
     <div class="demo-wrap">
 
       <!-- Feed -->
       <div class="feed-col">
         <div class="feed-frame" id="feedFrame">
-          <img id="videoStream" src="http://localhost:5000/video_feed" alt="Camera stream" />
+          <img id="videoStream" src="http://localhost:5000/video_feed" alt="Flask camera preview" />
+          <video id="knnVideo" autoplay playsinline muted
+            style="display:none;"></video>
           <div class="feed-overlay-top" id="feedOverlayTop" style="display:none;">
             <span class="live-dot"></span>
             <span class="live-text">LIVE</span>
@@ -205,6 +206,26 @@
           <svg id="camIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           <span id="camLabel">Start Camera</span>
         </button>
+
+        <div class="knn-controls">
+          <p><strong>Train with webcam examples</strong></p>
+          <p>Start the camera, make each sign clearly, then collect its examples. Recognition requires examples for all five signs.</p>
+
+          <button type="button" onclick="trainKNN(0)">Train Hello</button>
+          <button type="button" onclick="trainKNN(1)">Train Thank You</button>
+          <button type="button" onclick="trainKNN(2)">Train Sorry</button>
+          <button type="button" onclick="trainKNN(3)">Train Yes</button>
+          <button type="button" onclick="trainKNN(4)">Train No</button>
+          <button type="button" onclick="startKNNPrediction()">Start Recognition</button>
+          <button type="button" onclick="saveKNNTrainingData()">Save Training Data</button>
+          <button type="button" onclick="exportKNNTrainingData()">Export Data</button>
+          <button type="button" onclick="document.getElementById('knnTrainingImport').click()">Import Data</button>
+          <input id="knnTrainingImport" type="file" accept=".json,application/json"
+            hidden onchange="importKNNTrainingData(this)" />
+          <button type="button" onclick="clearKNNTrainingData()">Clear Training Data</button>
+
+          <p id="knnStatus" role="status" aria-live="polite">Start the camera to begin.</p>
+        </div>
       </div>
 
       <!-- Output panel -->
@@ -224,6 +245,7 @@
         <div class="out-card final-out-card" id="finalCard">
           <div class="out-card-title out-card-title-green">✦ Final Output</div>
           <div class="final-text" id="finalText"></div>
+          <p class="original-gloss" id="originalGloss"></p>
         </div>
 
         <div class="lang-row">
@@ -248,6 +270,52 @@
 
       </div>
     </div>
+    <section class="ai-sentence-panel" aria-labelledby="aiSentenceHeading">
+      <div class="section-label">✦ Optional local AI · Ollama</div>
+      <h3 id="aiSentenceHeading">AI Sentence Builder</h3>
+      <p class="ai-sentence-note">Collect stable predictions, review or correct each gloss, then request one sentence. This is an experimental limited-vocabulary aid, not complete ISL translation. AI suggestions are interpretations—not verified signs.</p>
+      <div class="ai-sentence-toolbar">
+        <label for="sentenceRecognizer">Recognizer</label>
+        <select id="sentenceRecognizer" class="lang-sel">
+          <option value="browser_knn">Loading recognizers…</option>
+        </select>
+        <label for="experimentalScope">Model scope</label>
+        <select id="experimentalScope" class="lang-sel">
+          <option value="shared">Shared</option>
+          <option value="personal">Personal</option>
+        </select>
+      </div>
+      <p id="recognizerStateStatus" class="experimental-status" role="status" aria-live="polite">Loading current vocabulary and model state…</p>
+      <p id="aiProviderStatus" class="experimental-status" role="status" aria-live="polite">Checking local sentence model…</p>
+      <div class="ai-sequence-controls" role="group" aria-label="Sequence capture controls">
+        <button class="experimental-button" id="startAiSequence" type="button">Start sequence</button>
+        <button class="experimental-button" id="pauseAiSequence" type="button" disabled>Pause</button>
+        <button class="experimental-button" id="undoAiSign" type="button" disabled>Undo last</button>
+        <button class="experimental-button" id="clearAiSigns" type="button">Clear sequence</button>
+        <button class="experimental-button" id="finishAiSentence" type="button" disabled>Finish Sentence</button>
+      </div>
+      <p id="aiSentenceStatus" class="experimental-status" role="status" aria-live="polite">Select a recognizer and start sequence capture when ready.</p>
+      <ol id="aiSignSequence" class="ai-sign-sequence" aria-label="Recognized signs to review"></ol>
+      <p id="aiSequenceEmpty" class="experimental-status">No signs collected yet. Start the selected recognizer and perform signs.</p>
+      <div class="ai-sentence-actions">
+        <span class="experimental-note">Experimental capture classifies successive 30-frame windows. Brief predictions are filtered; abstentions and pauses are not added as signs.</span>
+      </div>
+      <div id="aiSentenceResult" class="ai-sentence-result" hidden>
+        <p class="ai-result-label">Original recognized sequence</p>
+        <p id="aiOriginalSequence" class="ai-original-sequence"></p>
+        <ul id="aiCorrections" class="ai-corrections"></ul>
+        <p id="aiUncertainty" class="ai-uncertainty" hidden></p>
+        <label for="aiSentenceText" class="ai-result-label">Suggested English sentence · editable</label>
+        <textarea id="aiSentenceText" rows="2" maxlength="500"></textarea>
+        <p id="aiGrammarNotes" class="ai-grammar-notes"></p>
+        <div class="ai-sentence-actions">
+          <button class="experimental-button" id="acceptAiSentence" type="button">Accept sentence</button>
+          <button class="experimental-button" id="speakAiSentence" type="button">Speak sentence</button>
+        </div>
+        <p id="aiAcceptedStatus" class="experimental-status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+    <p id="experimentalPrediction" class="experimental-status" role="status" aria-live="polite">Select a recognizer and start the camera to begin.</p>
   </section>
 
   <!-- ── FEATURES ── -->
@@ -259,55 +327,55 @@
 
         <div class="feature-card">
           <div class="feature-icon">⚡</div>
-          <h3 class="feature-title">Real-Time Recognition</h3>
+          <h3 class="feature-title">Two separate recognizers</h3>
           <p class="feature-desc">
-            Processes live webcam frames server-side using MediaPipe Holistic — extracting
-            hand, pose, and facial landmarks simultaneously at up to 30 fps for instant sign detection.
+            Browser KNN is the fixed five-sign fallback. A current, validated sequence model can
+            use the saved vocabulary; unvalidated candidates are never live recognizers.
           </p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">🗣</div>
-          <h3 class="feature-title">7 Indian Languages</h3>
+          <h3 class="feature-title">Review before interpreting</h3>
           <p class="feature-desc">
-            Recognised sentences are spoken aloud using gTTS, supporting English, Hindi, Bengali,
-            Tamil, Telugu, Marathi, and Gujarati — making ISL accessible across all major Indian languages.
+            Stable predictions appear in an editable ordered sequence. Remove or correct labels
+            before requesting a sentence suggestion.
           </p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">✦</div>
-          <h3 class="feature-title">AI Grammar Correction</h3>
+          <h3 class="feature-title">Optional local sentence aid</h3>
           <p class="feature-desc">
-            Groq LLaMA 3.1 reconstructs grammatically correct English from raw ISL gloss words —
-            automatically adding linking verbs, articles, and prepositions before speaking.
+            Ollama can suggest an English interpretation on request. Suggestions and recognition
+            corrections are not verified translations.
           </p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">🎯</div>
-          <h3 class="feature-title">Vote-Based Stability</h3>
+          <h3 class="feature-title">Save, then train explicitly</h3>
           <p class="feature-desc">
-            A majority-vote window across 6 consecutive predictions confirms a word before
-            adding it to the sentence — eliminating flickering and false positives.
+            Developer Studio recordings are saved separately. New examples do not change a model
+            until you train, evaluate, and explicitly activate a candidate.
           </p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">🧠</div>
-          <h3 class="feature-title">BiLSTM Model</h3>
+          <h3 class="feature-title">Experimental sequence model</h3>
           <p class="feature-desc">
-            A Bidirectional LSTM processes 30-frame landmark sequences, capturing both
-            forward and backward temporal patterns for robust gesture classification.
+            It predicts one sign from each 30-frame window; stable labels are accumulated over time.
+            This is not a continuous sign-language translation model.
           </p>
         </div>
 
         <div class="feature-card">
           <div class="feature-icon">🌐</div>
-          <h3 class="feature-title">Browser-Based UI</h3>
+          <h3 class="feature-title">Local-first workflow</h3>
           <p class="feature-desc">
-            Runs entirely in your browser — no plugins, no installation. The Flask server
-            streams annotated video via MJPEG and serves the full web interface locally.
+            The active recognizer uses the same browser camera stream. Flask supplies sentence
+            controls and current model/vocabulary state; Developer Studio manages model candidates.
           </p>
         </div>
 
@@ -318,61 +386,14 @@
   <!-- ── SIGN GLOSSARY ── -->
   <section class="glossary-section" id="glossary">
     <div class="glossary-inner">
-      <div class="section-label">✦ Sign Glossary</div>
-      <h2 class="section-heading">Supported <em>signs.</em></h2>
-      <p class="glossary-sub">A selection of the 50 ISL word classes the model can recognise.</p>
-      <div class="sign-chips">
-        <div class="sign-chip"><div class="chip-emoji">🙋</div><div class="chip-name">I</div><div class="chip-hindi">मैं</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👆</div><div class="chip-name">You</div><div class="chip-hindi">तुम</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👨</div><div class="chip-name">He</div><div class="chip-hindi">वह</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👩</div><div class="chip-name">She</div><div class="chip-hindi">वह</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👥</div><div class="chip-name">They</div><div class="chip-hindi">वे</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🤝</div><div class="chip-name">We</div><div class="chip-hindi">हम</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👉</div><div class="chip-name">It</div><div class="chip-hindi">यह</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👩‍👦</div><div class="chip-name">Mother</div><div class="chip-hindi">माँ</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👨‍👦</div><div class="chip-name">Father</div><div class="chip-hindi">पिता</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👦</div><div class="chip-name">Brother</div><div class="chip-hindi">भाई</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👧</div><div class="chip-name">Sister</div><div class="chip-hindi">बहन</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👨‍👩‍👧‍👦</div><div class="chip-name">Family</div><div class="chip-hindi">परिवार</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🤗</div><div class="chip-name">Friend</div><div class="chip-hindi">दोस्त</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👨‍⚕️</div><div class="chip-name">Doctor</div><div class="chip-hindi">डॉक्टर</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👨‍🏫</div><div class="chip-name">Teacher</div><div class="chip-hindi">शिक्षक</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👮</div><div class="chip-name">Police</div><div class="chip-hindi">पुलिस</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🎓</div><div class="chip-name">Student</div><div class="chip-hindi">छात्र</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🤒</div><div class="chip-name">Patient</div><div class="chip-hindi">मरीज़</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🚹</div><div class="chip-name">Man</div><div class="chip-hindi">आदमी</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🚺</div><div class="chip-name">Woman</div><div class="chip-hindi">औरत</div></div>
-        <div class="sign-chip"><div class="chip-emoji">😊</div><div class="chip-name">Happy</div><div class="chip-hindi">खुश</div></div>
-        <div class="sign-chip"><div class="chip-emoji">😔</div><div class="chip-name">Sad</div><div class="chip-hindi">दुखी</div></div>
-        <div class="sign-chip"><div class="chip-emoji">✅</div><div class="chip-name">Good</div><div class="chip-hindi">अच्छा</div></div>
-        <div class="sign-chip"><div class="chip-emoji">❌</div><div class="chip-name">Bad</div><div class="chip-hindi">बुरा</div></div>
-        <div class="sign-chip"><div class="chip-emoji">💚</div><div class="chip-name">Alive</div><div class="chip-hindi">जीवित</div></div>
-        <div class="sign-chip"><div class="chip-emoji">💪</div><div class="chip-name">Strong</div><div class="chip-hindi">मजबूत</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🥱</div><div class="chip-name">Weak</div><div class="chip-hindi">कमज़ोर</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🌿</div><div class="chip-name">Healthy</div><div class="chip-hindi">स्वस्थ</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🤧</div><div class="chip-name">Sick</div><div class="chip-hindi">बीमार</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👴</div><div class="chip-name">Old</div><div class="chip-hindi">बूढ़ा</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🧒</div><div class="chip-name">Young</div><div class="chip-hindi">जवान</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👂</div><div class="chip-name">Deaf</div><div class="chip-hindi">बहरा</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🌅</div><div class="chip-name">Good Morning</div><div class="chip-hindi">सुप्रभात</div></div>
-        <div class="sign-chip"><div class="chip-emoji">👋</div><div class="chip-name">Hello</div><div class="chip-hindi">नमस्ते</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🙏</div><div class="chip-name">Thank You</div><div class="chip-hindi">धन्यवाद</div></div>
-        <div class="sign-chip"><div class="chip-emoji">❓</div><div class="chip-name">How are you</div><div class="chip-hindi">कैसे हो</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🏠</div><div class="chip-name">House</div><div class="chip-hindi">घर</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🏥</div><div class="chip-name">Hospital</div><div class="chip-hindi">अस्पताल</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🏫</div><div class="chip-name">School</div><div class="chip-hindi">स्कूल</div></div>
-        <div class="sign-chip"><div class="chip-emoji">💭</div><div class="chip-name">Dream</div><div class="chip-hindi">सपना</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🏃</div><div class="chip-name">Exercise</div><div class="chip-hindi">व्यायाम</div></div>
-        <div class="sign-chip"><div class="chip-emoji">💊</div><div class="chip-name">Medicine</div><div class="chip-hindi">दवाई</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🤟</div><div class="chip-name">Sign</div><div class="chip-hindi">संकेत</div></div>
-        <div class="sign-chip"><div class="chip-emoji">⚽</div><div class="chip-name">Sport</div><div class="chip-hindi">खेल</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🌄</div><div class="chip-name">Morning</div><div class="chip-hindi">सुबह</div></div>
-        <div class="sign-chip"><div class="chip-emoji">🌙</div><div class="chip-name">Night</div><div class="chip-hindi">रात</div></div>
-        <div class="sign-chip"><div class="chip-emoji">📅</div><div class="chip-name">Today</div><div class="chip-hindi">आज</div></div>
-        <div class="sign-chip"><div class="chip-emoji">📆</div><div class="chip-name">Tomorrow</div><div class="chip-hindi">कल</div></div>
-        <div class="sign-chip"><div class="chip-emoji">⏮️</div><div class="chip-name">Yesterday</div><div class="chip-hindi">कल (बीता)</div></div>
-        <div class="sign-chip"><div class="chip-emoji">⏰</div><div class="chip-name">Time</div><div class="chip-hindi">समय</div></div>
-      </div>
+      <div class="section-label">✦ Vocabulary status</div>
+      <h2 class="section-heading">Labels that <em>evolve.</em></h2>
+      <p class="glossary-sub">
+        Current saved labels, sample counts, and session counts are available in Developer Studio.
+        The demo refreshes active model support from Flask; a saved label is not automatically
+        recognized, and labels are not gesture instructions.
+      </p>
+      <a class="btn-outline" href="/developer">View vocabulary and model state</a>
     </div>
   </section>
 
@@ -383,21 +404,20 @@
         <div class="section-label">✦ About</div>
         <h2 class="section-heading">Bridging the <em>silence.</em></h2>
         <p class="about-para">
-          This system captures webcam video server-side, extracts MediaPipe Holistic
-          landmarks across hand joints, body pose, and facial features — feeding
-          30-frame sequences into a Bidirectional LSTM to recognise 50 ISL word classes in real time.
+          This project offers a five-label browser KNN fallback and an active sequence classifier
+          built from saved 30-frame, 378-feature landmark sequences when a compatible, validated
+          model has been activated. Neither path performs complete continuous ISL translation.
         </p>
         <p class="about-para">
-          A vote-based confirmation window stabilises predictions. Sentences are
-          refined by Groq LLM grammar correction and spoken aloud in 7 Indian languages via gTTS.
+          Stable word predictions can be reviewed before an optional local Ollama sentence request.
+          Original predictions remain visible; model suggestions are not verified meanings.
         </p>
       </div>
 
       <div class="stats-wrap">
-        <div class="stat-card"><div class="stat-n">50</div><div class="stat-d">ISL Classes</div></div>
-        <div class="stat-card"><div class="stat-n">7</div><div class="stat-d">Languages</div></div>
-        <div class="stat-card"><div class="stat-n">30</div><div class="stat-d">Frames/Seq</div></div>
-        <div class="stat-card"><div class="stat-n">378</div><div class="stat-d">Features</div></div>
+        <div class="stat-card"><div class="stat-n">2</div><div class="stat-d">separate recognizers</div></div>
+        <div class="stat-card"><div class="stat-n">30</div><div class="stat-d">frames per experiment</div></div>
+        <div class="stat-card"><div class="stat-n">378</div><div class="stat-d">landmark features</div></div>
       </div>
     </div>
   </section>
@@ -410,22 +430,52 @@
       <div class="pipe-card">
         <div class="pipe-num">01</div>
         <h3>Capture</h3>
-        <p>OpenCV reads webcam frames server-side and flips them for natural mirroring.</p>
+        <p>Choose the active validated sequence model or the limited Browser KNN fallback. Both share one browser webcam stream.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">02</div>
         <h3>Landmarks</h3>
-        <p>MediaPipe Holistic extracts 378-dimensional feature vectors per frame.</p>
+        <p>The experimental path extracts the established 378-feature landmarks for each of 30 frames.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">03</div>
-        <h3>BiLSTM</h3>
-        <p>A 30-frame sequence is classified with vote-based confirmation for stability.</p>
+        <h3>Stable word sequence</h3>
+        <p>Stable individual predictions accumulate in order; this is not continuous ISL translation.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">04</div>
         <h3>Speak</h3>
-        <p>Groq LLM refines the sentence. gTTS speaks it in your chosen language.</p>
+        <p>On request, local Ollama can suggest an English sentence for review and editing.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="how-section" id="how-it-works">
+    <div class="content-wrap">
+      <div class="section-label">How it works</div>
+      <h2 class="section-heading">A clear path from <em>sign to speech.</em></h2>
+      <p class="section-intro">Choose the recognizer explicitly, collect stable word predictions, review them, and request a sentence-level interpretation only when ready.</p>
+      <div class="how-grid">
+        <article class="how-card"><span>01</span><h3>Webcam input</h3><p>Allow camera access and collect examples for the five demo signs.</p></article>
+        <article class="how-card"><span>02</span><h3>Landmark processing</h3><p>The active sequence model extracts the same 30-frame, 378-feature landmark contract used by Developer Studio recordings.</p></article>
+        <article class="how-card"><span>03</span><h3>Sign classification</h3><p>The active validated sequence model predicts from saved vocabulary; the KNN fallback uses browser-collected examples for five fixed signs.</p></article>
+        <article class="how-card"><span>04</span><h3>Sentence &amp; speech</h3><p>The local AI suggestion is optional and editable; the original sequence stays visible and corrections remain suggestions.</p></article>
+      </div>
+      <div class="supported-signs" aria-label="Five supported demo signs">
+        <span>Hello</span><span>Thank You</span><span>Sorry</span><span>Yes</span><span>No</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="progress-section" id="progress">
+    <div class="content-wrap">
+      <div class="section-label">Project progress</div>
+      <h2 class="section-heading">Built for a <em>live demonstration.</em></h2>
+      <div class="progress-grid">
+        <article class="progress-card"><span class="status-tag status-ready">Available</span><h3>Browser-based KNN recognition</h3><p>Five fixed demo labels are supported; webcam examples are collected locally in the browser.</p></article>
+        <article class="progress-card"><span class="status-tag status-ready">Available</span><h3>Sequence review and sentence aid</h3><p>Stable predictions can be corrected before an optional local Ollama request; interpretations are not verified translations.</p></article>
+        <article class="progress-card"><span class="status-tag status-ready">Capture &amp; save</span><h3>Developer Studio</h3><p>Captures and saves reviewed landmark sequences locally for later model work.</p></article>
+        <article class="progress-card"><span class="status-tag status-experimental">Experimental</span><h3>Expandable classifier</h3><p>Requires more independent capture sessions and further evaluation before it can be relied on.</p></article>
       </div>
     </div>
   </section>
@@ -438,9 +488,12 @@
         <span class="logo-text">ISL Translator</span>
       </div>
       <p class="footer-tagline">"Bridging silence, one sign at a time."</p>
+      <a class="developer-link" href="/developer">Developer Studio</a>
     </div>
   </footer>
 
+  <script src="knn-recognizer.bundle.js"></script>
+  <script src="sequence-accumulator.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
