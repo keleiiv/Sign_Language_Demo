@@ -11,6 +11,10 @@
   <link rel="stylesheet" href="developer.css">
 </head>
 <body>
+  <nav class="studio-nav" aria-label="Primary navigation">
+    <a class="studio-brand" href="/" aria-label="ISL Translator home"><span aria-hidden="true"></span> ISL Translator</a>
+    <div><a href="/">Translator</a><a class="current" href="/developer" aria-current="page">Developer Studio</a></div>
+  </nav>
   <main class="page-shell">
     <header class="page-header">
       <a class="back-link" href="/">← Return to Translator</a>
@@ -20,6 +24,11 @@
       <div class="notice" role="note">
         This page is restricted to localhost. Add and save examples here; then explicitly train a candidate, evaluate it on independent sessions, and activate it only after validation. Allow camera access when prompted, and stop other webcam capture first.
       </div>
+      <nav class="studio-sections" aria-label="Studio sections">
+        <a href="#capture-session"><span>01</span> Capture</a>
+        <a href="#draft-collection"><span>02</span> Dataset</a>
+        <a href="#training-lab"><span>03</span> Model lab</a>
+      </nav>
     </header>
 
     <section class="workspace" aria-label="Vocabulary capture workspace">
@@ -35,6 +44,12 @@
           <form id="draftForm" class="draft-form">
             <label for="wordLabel">Canonical word label</label>
             <input id="wordLabel" name="label" maxlength="80" required autocomplete="off" placeholder="For example, Fish">
+            <div class="sentence-mapping-entry">
+              <h3>Sentence Mapping</h3>
+              <p>Optionally save the English sentence with this vocabulary label. It remains inactive until a compatible model is trained, evaluated, and activated.</p>
+              <label for="newWordSentence">Predefined English sentence</label>
+              <textarea id="newWordSentence" name="sentence" maxlength="1000" rows="3" placeholder="For example, Good morning! I hope you have a wonderful day."></textarea>
+            </div>
             <label for="scopeSelect">Storage scope</label>
             <select id="scopeSelect" name="scope">
               <option value="shared">Shared vocabulary (developer review required before distribution)</option>
@@ -45,7 +60,7 @@
           <p id="draftMessage" class="status-message" aria-live="polite"></p>
         </section>
 
-        <section class="panel camera-panel">
+        <section class="panel camera-panel" id="capture-session">
           <div class="section-heading">
             <div>
               <p class="eyebrow">2 / CAPTURE</p>
@@ -69,7 +84,38 @@
           <p id="captureMessage" class="status-message" aria-live="polite"></p>
         </section>
 
-        <section class="panel">
+        <section class="panel builtin-capture-panel" aria-labelledby="builtinCaptureHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">BUILT-IN CLASS DATA</p>
+              <h2 id="builtinCaptureHeading">Add samples to an existing label</h2>
+            </div>
+            <span class="contract-tag">30 × 378 · separate store</span>
+          </div>
+          <p class="muted">Choose the canonical built-in class, start a recording session, then capture and save sequences. Samples are appended to a separate dataset; no draft or recognition class is created and no model is trained.</p>
+          <label for="builtinCaptureLabel">Built-in vocabulary label</label>
+          <select id="builtinCaptureLabel">
+            <option value="">Loading built-in labels…</option>
+          </select>
+          <div class="builtin-session-controls">
+            <button id="startBuiltinSession" class="button button-secondary" type="button" disabled>Start new recording session</button>
+            <span id="builtinSessionInfo" class="muted">Select a label to begin.</span>
+          </div>
+          <div class="capture-controls">
+            <button id="captureBuiltinSequence" class="button button-primary" type="button" disabled>Capture 30 frames for built-in label</button>
+            <span id="builtinPendingCount" class="count-pill">0 pending</span>
+          </div>
+          <div id="builtinPendingSamples" class="sample-list empty-state">Captured built-in sequences appear here for review before saving.</div>
+          <button id="saveBuiltinSamples" class="button button-secondary save-button" type="button" disabled>Save accepted built-in samples</button>
+          <p id="builtinCaptureStatus" class="status-message" role="status" aria-live="polite">Samples are not included in training until a later training workflow is explicitly used.</p>
+          <details class="builtin-sample-counts">
+            <summary>Review saved built-in sample and session counts</summary>
+            <div id="builtinSampleCounts" class="sample-list empty-state">Loading dataset counts…</div>
+          </details>
+          <p id="builtinTrainingStatus" class="status-message" role="status" aria-live="polite">Training requires 4 independent saved sessions for the selected built-in label. Train creates a separate candidate using eligible built-in and draft data; activation remains explicit.</p>
+        </section>
+
+        <section class="panel" id="draft-collection">
           <div class="section-heading">
             <div>
               <p class="eyebrow">3 / REVIEW & SAVE</p>
@@ -84,6 +130,23 @@
       </div>
 
       <aside class="draft-column">
+        <section class="panel builtin-mapping-panel" aria-labelledby="builtinMappingHeading">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">EXISTING VOCABULARY</p>
+              <h2 id="builtinMappingHeading">Map a built-in sign</h2>
+            </div>
+          </div>
+          <p class="muted">Choose an existing built-in label to add or edit its English sentence. This does not create a vocabulary entry or recognition class.</p>
+          <label for="builtinMappingLabel">Built-in sign label</label>
+          <select id="builtinMappingLabel" aria-describedby="builtinMappingStatus">
+            <option value="">Loading built-in labels…</option>
+          </select>
+          <label for="builtinMappingSentence">Predefined English sentence</label>
+          <textarea id="builtinMappingSentence" maxlength="1000" rows="3" disabled placeholder="Choose a built-in label first."></textarea>
+          <button id="saveBuiltinMapping" class="button button-secondary" type="button" disabled>Save built-in sentence mapping</button>
+          <p id="builtinMappingStatus" class="status-message" role="status" aria-live="polite">Loading built-in vocabulary…</p>
+        </section>
         <section class="panel draft-list-panel">
           <div class="section-heading">
             <div>
@@ -103,6 +166,14 @@
             </div>
           </div>
           <p id="activeDraftMeta" class="muted">Create a draft or select one from the list.</p>
+          <section class="sentence-mapping-editor" aria-labelledby="sentenceMappingHeading">
+            <h3 id="sentenceMappingHeading">Sentence Mapping</h3>
+            <p>Mappings are attached to the sign label. Saving a sentence does not add a recognition class.</p>
+            <label for="activeSentenceMapping">Predefined English sentence</label>
+            <textarea id="activeSentenceMapping" maxlength="1000" rows="3" disabled placeholder="Select or create a vocabulary draft first."></textarea>
+            <button id="saveSentenceMapping" class="button button-secondary" type="button" disabled>Save sentence mapping</button>
+            <p id="sentenceMappingStatus" class="status-message" role="status" aria-live="polite">Select a draft to view its sentence mapping.</p>
+          </section>
           <div class="session-controls">
             <p id="activeSessionMeta" class="muted">Select a draft to see its recording session.</p>
             <button id="newSession" class="button button-secondary" type="button" disabled>Start New Session</button>
@@ -114,7 +185,7 @@
         </section>
       </aside>
     </section>
-    <section class="panel training-lab" aria-labelledby="trainingLabHeading">
+    <section class="panel training-lab" id="training-lab" aria-labelledby="trainingLabHeading">
       <div class="section-heading">
         <div>
           <p class="eyebrow">4 / MODEL MANAGEMENT</p>
@@ -130,6 +201,9 @@
       <p class="muted">Saving samples updates the dataset only. Training creates a separate candidate; activation is allowed only when it matches the complete current vocabulary and saved data and has a complete session-separated confusion report.</p>
       <p id="trainingLabStatus" class="status-message" role="status" aria-live="polite">Loading saved vocabulary and model state…</p>
       <div id="trainingVocabulary" class="sample-list"></div>
+      <button id="exportDataset" class="button button-secondary" type="button">Export selected-scope dataset</button>
+      <p class="privacy-note">The ZIP contains only the selected scope, ordered labels, 30 × 378 NumPy sequences, hashes, and session-split metadata. Personal examples are included only when Personal is explicitly selected.</p>
+      <p id="exportDatasetStatus" class="status-message" role="status" aria-live="polite"></p>
       <div class="capture-controls">
         <button id="trainModelCandidate" class="button button-primary" type="button" disabled>Train candidate from saved sequences</button>
         <label for="trainingCandidate">Candidate artifact</label>

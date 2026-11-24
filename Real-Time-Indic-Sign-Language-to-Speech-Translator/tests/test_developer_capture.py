@@ -1,6 +1,12 @@
+import base64
+import hashlib
+import io
+import json
 import tempfile
+import threading
 import time
 import unittest
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -45,6 +51,102 @@ class CaptureValidationTests(unittest.TestCase):
     def test_incompatible_preprocessing_version_is_rejected(self):
         with self.assertRaises(SequenceContractError):
             validate_capture_sequence(valid_capture(), "legacy-1692")
+
+
+class HolisticPredictionWorkerTests(unittest.TestCase):
+    def test_prediction_task_is_reused_on_one_worker_thread(self):
+        import app
+
+        original_holistic = app._predict_holistic
+        worker_threads = []
+        built = []
+
+        class FakeHolistic:
+            def detect(self, _image):
+                worker_threads.append(threading.get_ident())
+                return object()
+
+        def build_holistic():
+            built.append(threading.get_ident())
+            return FakeHolistic()
+
+        frame = np.zeros((24, 32, 3), dtype=np.uint8)
+        success, encoded = cv2.imencode(".jpg", frame)
+        self.assertTrue(success)
+        frame_url = "data:image/jpeg;base64," + base64.b64encode(
+            encoded.tobytes()
+        ).decode("ascii")
+        quality = SimpleNamespace(hand_frames=30)
+
+        try:
+            app._predict_holistic = None
+            with (
+                patch.object(app, "_build_holistic", side_effect=build_holistic),
+                patch.object(
+                    app,
+                    "extract_frame_features",
+                    return_value=np.zeros(378, dtype=np.float32),
+                ),
+                patch.object(
+                    app,
+                    "validate_capture_sequence",
+                    side_effect=lambda sequence, _version: (sequence, quality),
+                ),
+            ):
+                first, first_quality, timings = app._sequence_from_frame_data_urls(
+                    [frame_url] * 30, include_timing=True
+                )
+                second, second_quality = app._sequence_from_frame_data_urls(
+                    [frame_url] * 30
+                )
+        finally:
+            app._predict_holistic = original_holistic
+
+        self.assertEqual(first.shape, SEQUENCE_SHAPE)
+        self.assertEqual(second.shape, SEQUENCE_SHAPE)
+        self.assertIs(first_quality, quality)
+        self.assertIs(second_quality, quality)
+        self.assertIn("frame_decode_ms", timings)
+        self.assertIn("landmark_extraction_ms", timings)
+        self.assertIn("quality_validation_ms", timings)
+        self.assertEqual(timings["hand_frames"], 30)
+        self.assertEqual(len(built), 1)
+        self.assertEqual(len(set(built + worker_threads)), 1)
+        self.assertNotEqual(built[0], threading.get_ident())
+
+    def test_hand_quality_rejection_carries_processing_timing(self):
+        import app
+
+        original_holistic = app._predict_holistic
+
+        class FakeHolistic:
+            def detect(self, _image):
+                return object()
+
+        try:
+            app._predict_holistic = None
+            with patch.object(app, "_build_holistic", return_value=FakeHolistic()), \
+                    patch.object(
+                        app,
+                        "extract_frame_features",
+                        return_value=np.zeros(378, dtype=np.float32),
+                    ):
+                with self.assertRaisesRegex(
+                    SequenceContractError, "at least 80%"
+                ) as raised:
+                    app._sequence_from_decoded_frames(
+                        [np.zeros((24, 32, 3), dtype=np.uint8)] * 30,
+                        include_timing=True,
+                    )
+        finally:
+            app._predict_holistic = original_holistic
+
+        self.assertTrue(raised.exception.processing_timing["hand_quality_rejected"])
+        self.assertEqual(raised.exception.processing_timing["hand_frames"], 0)
+        self.assertIn(
+            "landmark_extraction_ms",
+            raised.exception.processing_timing,
+        )
 
 
 class DeveloperDraftEndpointTests(unittest.TestCase):
@@ -117,6 +219,167 @@ class DeveloperDraftEndpointTests(unittest.TestCase):
             json={"scope": scope or draft["draft"]["scope"]},
             headers={"Host": "localhost"},
         )
+
+    def test_dataset_export_preserves_order_contract_and_scope(self):
+        created = [
+            self.create_draft("ZebraSign", "shared"),
+            self.create_draft("AlphaSign", "shared"),
+            self.create_draft("PrivateSign", "personal"),
+        ]
+        for draft in created:
+            self.save_example(draft)
+
+        response = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            self.assertEqual(
+                archive.namelist(),
+                [
+                    "labels.json",
+                    "dataset.json",
+                    *[
+                        f"sequences/{sample.sample_id}.npy"
+                        for sample in sorted(
+                            self.store.list_samples("shared"),
+                            key=lambda item: (
+                                item.label_id, item.session_id, item.sample_id
+                            ),
+                        )
+                    ],
+                ],
+            )
+            labels = json.loads(archive.read("labels.json"))
+            dataset = json.loads(archive.read("dataset.json"))
+            self.assertEqual(labels["scope"], "shared")
+            self.assertEqual(
+                [item["label"] for item in labels["labels"]],
+                ["ZebraSign", "AlphaSign"],
+            )
+            self.assertEqual(
+                [item["class_index"] for item in labels["labels"]], [0, 1]
+            )
+            self.assertEqual(labels["ordering"], "ascending_label_id")
+            self.assertEqual(
+                labels["preprocessing_version"], PREPROCESSING_VERSION
+            )
+            self.assertEqual(dataset["sequence_shape"], [30, 378])
+            self.assertFalse(dataset["training_ready"])
+            self.assertFalse(dataset["evaluation_ready"])
+            self.assertEqual(dataset["sample_count"], 2)
+            self.assertEqual(len(dataset["sessions"]), 2)
+            for sample in dataset["samples"]:
+                self.assertEqual(sample["scope"], "shared")
+                self.assertEqual(sample["shape"], [30, 378])
+                self.assertEqual(
+                    sample["preprocessing_version"], PREPROCESSING_VERSION
+                )
+                payload = archive.read(sample["path"])
+                self.assertEqual(
+                    hashlib.sha256(payload).hexdigest(), sample["sha256"]
+                )
+                sequence = np.load(io.BytesIO(payload), allow_pickle=False)
+                self.assertEqual(sequence.shape, (30, 378))
+                self.assertEqual(sequence.dtype, np.float32)
+                self.assertIsNone(sample["split"])
+            self.assertNotIn("PrivateSign", archive.namelist())
+            self.assertNotIn(
+                "PrivateSign", [item["label"] for item in labels["labels"]]
+            )
+
+        personal_response = self.client.get(
+            "/developer/api/dataset/export?scope=personal",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(personal_response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(personal_response.data)) as archive:
+            personal_labels = json.loads(archive.read("labels.json"))
+            self.assertEqual(
+                [item["label"] for item in personal_labels["labels"]],
+                ["PrivateSign"],
+            )
+
+        repeated = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(repeated.data, response.data)
+
+    def test_dataset_export_requires_valid_scope_and_saved_examples(self):
+        invalid_scope = self.client.get(
+            "/developer/api/dataset/export?scope=all",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(invalid_scope.status_code, 400)
+
+        no_examples = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(no_examples.status_code, 422)
+        self.assertIn("No saved shared examples", no_examples.get_json()["error"])
+
+        forbidden = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "attacker.example"},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+    def test_dataset_export_records_reproducible_session_separated_split(self):
+        drafts = [
+            self.create_draft("FirstSign", "shared"),
+            self.create_draft("SecondSign", "shared"),
+        ]
+        for draft in drafts:
+            self.save_example(draft)
+            for _ in range(3):
+                started = self.start_session(draft)
+                self.assertEqual(started.status_code, 201)
+                draft["session_id"] = started.get_json()["session_id"]
+                self.save_example(draft)
+
+        response = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(response.status_code, 200)
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            dataset = json.loads(archive.read("dataset.json"))
+        self.assertTrue(dataset["training_ready"])
+        self.assertTrue(dataset["evaluation_ready"])
+        self.assertEqual(dataset["sample_count"], 8)
+        for label in ("FirstSign", "SecondSign"):
+            train_sessions = set(dataset["split"]["train_sessions"][label])
+            validation_sessions = set(
+                dataset["split"]["validation_sessions"][label]
+            )
+            self.assertGreaterEqual(len(train_sessions), 2)
+            self.assertGreaterEqual(len(validation_sessions), 2)
+            self.assertFalse(train_sessions & validation_sessions)
+            assignments = {
+                item["session_id"]: item["split"]
+                for item in dataset["samples"]
+                if item["label"] == label
+            }
+            self.assertEqual(
+                {session for session, split in assignments.items()
+                 if split == "train"},
+                train_sessions,
+            )
+            self.assertEqual(
+                {session for session, split in assignments.items()
+                 if split == "validation"},
+                validation_sessions,
+            )
+
+        repeated = self.client.get(
+            "/developer/api/dataset/export?scope=shared",
+            headers={"Host": "localhost"},
+        )
+        self.assertEqual(repeated.data, response.data)
 
     def test_new_session_is_unique_and_new_samples_keep_old_session_unchanged(self):
         draft = self.create_draft("SessionWord", "shared")
@@ -330,6 +593,7 @@ class DeveloperDraftEndpointTests(unittest.TestCase):
         self.assertFalse(
             initial["recognizers"]["experimental"]["full_vocabulary_supported"]
         )
+        self.assertIn("status_build_ms", initial["timings"])
 
         draft = self.create_draft("DynamicWord", "shared")
         after_entry = self.client.get(
@@ -348,6 +612,37 @@ class DeveloperDraftEndpointTests(unittest.TestCase):
         self.assertIn(
             "DynamicWord", [item["label"] for item in after_sample["words"]]
         )
+
+    def test_public_vocabulary_can_skip_candidate_scanning_for_translator(self):
+        status = {
+            "scope": "shared",
+            "preprocessing_version": PREPROCESSING_VERSION,
+            "vocabulary_version": "test-version",
+            "active_model": {"usable": False, "supports": []},
+            "candidates": [],
+            "candidate_list_error": None,
+            "timings": {
+                "active_model_validation_ms": 1.0,
+                "candidate_validation_ms": 0.0,
+            },
+        }
+        with (
+            patch.object(
+                self.app_module, "_experimental_status", return_value=status
+            ) as status_mock,
+            patch.object(self.app_module, "_draft_payload", return_value=[]) as drafts_mock,
+        ):
+            response = self.client.get(
+                "/api/vocabulary?scope=shared&include_candidates=false",
+                headers={"Host": "localhost"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.get_json())
+        status_mock.assert_called_once_with("shared", include_candidates=False)
+        drafts_mock.assert_called_once_with(
+            "shared", include_model_references=False
+        )
+        self.assertEqual(response.get_json()["candidates"], [])
 
     def test_public_vocabulary_refresh_tracks_active_model_changes(self):
         inactive = {
@@ -663,6 +958,10 @@ class DeveloperDraftEndpointTests(unittest.TestCase):
         self.assertIn("unvalidated", prediction["evaluation_status"])
         self.assertTrue(prediction["test_only"])
         self.assertEqual(prediction["sequence_quality"]["preprocessing_version"], PREPROCESSING_VERSION)
+        self.assertIn("model_inference_ms", prediction["timings"])
+        self.assertIn("classifier_load_ms", prediction["timings"])
+        self.assertIn("model_validation_ms", prediction["timings"])
+        self.assertIn("request_total_ms", prediction["timings"])
         self.assertFalse((self.store.root / "personal" / "models" / "active.json").exists())
 
     def test_candidate_testing_rejects_stale_training_data(self):

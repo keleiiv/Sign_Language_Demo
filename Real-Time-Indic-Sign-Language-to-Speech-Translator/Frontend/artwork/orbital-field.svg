@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 760" fill="none">
+  <defs>
+    <radialGradient id="core" cx="0" cy="0" r="1" gradientTransform="matrix(14 350 -350 14 493 360)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#DDFBFF" stop-opacity=".94"/>
+      <stop offset=".12" stop-color="#9DE8FF" stop-opacity=".45"/>
+      <stop offset=".39" stop-color="#637FEA" stop-opacity=".13"/>
+      <stop offset="1" stop-color="#111A3E" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="0" cy="0" r="1" gradientTransform="matrix(8 278 -278 8 495 370)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#9FEAFF" stop-opacity=".14"/>
+      <stop offset=".72" stop-color="#8C9EFF" stop-opacity=".035"/>
+      <stop offset="1" stop-color="#9FAAFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="thread" x1="167" x2="765" y1="144" y2="632" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#A4F1FF" stop-opacity="0"/>
+      <stop offset=".46" stop-color="#C5F6FF" stop-opacity=".88"/>
+      <stop offset=".7" stop-color="#94ABFF" stop-opacity=".74"/>
+      <stop offset="1" stop-color="#9DA9FF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="orbit" x1="200" x2="747" y1="267" y2="505" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#86E4FF" stop-opacity=".04"/>
+      <stop offset=".48" stop-color="#C7F5FF" stop-opacity=".72"/>
+      <stop offset="1" stop-color="#9EA9FF" stop-opacity=".08"/>
+    </linearGradient>
+    <filter id="bloom" x="190" y="68" width="610" height="640" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="20"/>
+    </filter>
+    <filter id="spark" x="0" y="0" width="1" height="1" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="495" cy="373" r="320" fill="url(#halo)"/>
+  <ellipse cx="500" cy="383" fill="url(#core)" rx="252" ry="305"/>
+  <ellipse cx="496" cy="370" fill="#A6EDFF" fill-opacity=".22" rx="84" ry="196" filter="url(#bloom)"/>
+  <path d="M481 76C359 183 331 296 401 396c57 82 165 140 207 276" stroke="url(#thread)" stroke-width="1.25"/>
+  <path d="M516 57c-91 150-114 264-58 357 53 88 156 132 134 273" stroke="url(#thread)" stroke-opacity=".62" stroke-width=".8"/>
+  <path d="M551 101c-153 91-222 187-207 288 13 91 100 176 84 278" stroke="url(#thread)" stroke-opacity=".5" stroke-width=".7"/>
+  <path d="M463 98c48 124 131 205 248 244 81 27 137 65 168 114" stroke="url(#thread)" stroke-opacity=".52" stroke-width=".75"/>
+  <ellipse cx="496" cy="373" stroke="url(#orbit)" stroke-width=".9" transform="rotate(-23 496 373)" rx="282" ry="101"/>
+  <ellipse cx="496" cy="373" stroke="url(#orbit)" stroke-opacity=".5" stroke-width=".7" transform="rotate(47 496 373)" rx="247" ry="147"/>
+  <ellipse cx="497" cy="373" stroke="#BEEFFF" stroke-opacity=".12" stroke-width=".6" rx="173" ry="284"/>
+  <path d="M270 580c84-83 149-131 218-146 79-17 143 15 244 89" stroke="#B7F1FF" stroke-opacity=".42" stroke-width=".7"/>
+  <path d="M309 211c79 69 151 99 228 88 72-10 130-55 189-133" stroke="#B7F1FF" stroke-opacity=".26" stroke-width=".7"/>
+  <g fill="#E4FBFF" filter="url(#spark)">
+    <circle cx="682" cy="285" r="2.2"/><circle cx="322" cy="499" r="1.8"/>
+    <circle cx="550" cy="622" r="1.5"/><circle cx="423" cy="144" r="1.4"/>
+  </g>
+  <g fill="#D4E1FF" fill-opacity=".68">
+    <circle cx="240" cy="313" r="1"/><circle cx="739" cy="440" r="1"/>
+    <circle cx="590" cy="188" r=".9"/><circle cx="386" cy="663" r=".9"/>
+    <circle cx="716" cy="189" r=".7"/><circle cx="277" cy="586" r=".8"/>
+    <circle cx="449" cy="561" r=".7"/><circle cx="619" cy="510" r=".8"/>
+  </g>
+</svg>

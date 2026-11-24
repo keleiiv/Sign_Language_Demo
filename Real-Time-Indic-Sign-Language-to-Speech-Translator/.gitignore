@@ -63,6 +63,7 @@ node_modules/
 
 # Local vocabulary drafts and recordings (not synchronized by GitHub)
 data/vocabulary_drafts/
+data/builtin_vocabulary_training/
 
 # Downloaded dataset tree and metadata
 train/

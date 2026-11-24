@@ -7,286 +7,276 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,600;0,9..144,800;1,9..144,300;1,9..144,600;1,9..144,800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20261105-final-type" />
 </head>
 <body>
-
-  <canvas id="dotsCanvas"></canvas>
 
   <!-- ── NAVBAR ── -->
   <nav class="navbar">
     <div class="nav-inner">
       <div class="nav-logo">
-        <div class="logo-star">✦</div>
+        <div class="logo-star" aria-hidden="true"></div>
         <span class="logo-text">Indian SL Translator</span>
       </div>
       <ul class="nav-links">
-        <li><a href="#demo">Demo</a></li>
+        <li><a href="#demo" aria-current="page">Demo</a></li>
         <li><a href="#how-it-works">How it works</a></li>
         <li><a href="#progress">Project progress</a></li>
+        <li><a href="/developer">Developer Studio</a></li>
       </ul>
-      <button class="hamburger" id="hamburger"><span></span><span></span><span></span></button>
+      <button class="hamburger" id="hamburger" aria-label="Open navigation" aria-controls="mobileNav" aria-expanded="false"><span></span><span></span><span></span></button>
     </div>
     <div class="mobile-nav" id="mobileNav">
-      <a href="#demo">Demo</a>
+      <a href="#demo" aria-current="page">Demo</a>
       <a href="#how-it-works">How it works</a>
       <a href="#progress">Project progress</a>
+      <a href="/developer">Developer Studio</a>
     </div>
   </nav>
 
   <!-- ── HERO ── -->
   <section class="hero">
     <div class="hero-inner">
-      <p class="hero-eyebrow anim-1">A local, evolving ISL project</p>
+      <p class="hero-eyebrow anim-1">A local Indian Sign Language project</p>
       <h1 class="hero-title anim-2">
-        Real-Time Indian<br />Sign Language<br />
-        <em>to Speech Translator</em>
+        Signs, made<br />
+        <em>understood.</em>
       </h1>
       <p class="hero-sub anim-3">
-        Recognize a small set of signs, review them as an ordered sequence, and
-        request an optional local sentence suggestion. New vocabulary examples
-        are saved separately and require explicit model training and validation.
+        Recognize supported signs, see their configured sentence, and give each
+        phrase a voice. A focused local demonstration, built to grow through careful review.
       </p>
       <div class="hero-btns anim-4">
-        <a href="#demo" class="btn-primary">Open the live demo</a>
+        <a href="#demo" class="btn-primary">Explore Live Demo</a>
         <a href="#how-it-works" class="btn-outline">How it works</a>
       </div>
     </div>
 
-    <!-- India Skyline silhouette -->
-    <div class="hero-skyline" aria-hidden="true">
-      <svg viewBox="0 0 1440 180" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMax meet">
-        <g opacity="1">
-
-          <!-- LEFT CITY BUILDINGS -->
-          <rect x="0"   y="135" width="32" height="45" fill="#FF9933" opacity=".18"/>
-          <rect x="36"  y="115" width="24" height="65" fill="#138808" opacity=".16"/>
-          <rect x="64"  y="125" width="18" height="55" fill="#FF9933" opacity=".14"/>
-          <rect x="86"  y="105" width="14" height="75" fill="#000080" opacity=".13"/>
-          <rect x="104" y="118" width="26" height="62" fill="#138808" opacity=".15"/>
-
-          <!-- QUTUB MINAR (~x=158) tall tapering spire -->
-          <polygon points="152,180 164,180 162,52 154,52" fill="#FF9933" opacity=".28"/>
-          <rect x="150" y="52" width="16" height="4" fill="#FF9933" opacity=".28"/>
-          <rect x="151" y="70" width="14" height="3" fill="#FF9933" opacity=".28"/>
-          <rect x="152" y="88" width="12" height="3" fill="#FF9933" opacity=".28"/>
-          <rect x="153" y="106" width="10" height="3" fill="#FF9933" opacity=".28"/>
-          <ellipse cx="158" cy="50" rx="5" ry="8" fill="#FF9933" opacity=".28"/>
-
-          <!-- Buildings -->
-          <rect x="182" y="128" width="30" height="52" fill="#138808" opacity=".14"/>
-          <rect x="216" y="118" width="22" height="62" fill="#FF9933" opacity=".14"/>
-
-          <!-- PARLIAMENT OF INDIA (~x=295) -->
-          <rect x="262" y="132" width="88" height="48" fill="#000080" opacity=".18"/>
-          <path d="M267,132 A38,42 0 0 1 345,132 Z" fill="#000080" opacity=".22"/>
-          <rect x="304" y="82"  width="3"  height="50" fill="#000080" opacity=".25"/>
-          <rect x="300" y="80"  width="11" height="4"  fill="#FF9933" opacity=".30"/>
-
-          <!-- Buildings -->
-          <rect x="358" y="122" width="22" height="58" fill="#138808" opacity=".14"/>
-          <rect x="384" y="112" width="18" height="68" fill="#FF9933" opacity=".14"/>
-
-          <!-- INDIA GATE (~x=450) -->
-          <rect x="412" y="88"  width="92" height="13" fill="#FF9933" opacity=".28"/>
-          <rect x="412" y="101" width="24" height="79" fill="#FF9933" opacity=".28"/>
-          <rect x="480" y="101" width="24" height="79" fill="#FF9933" opacity=".28"/>
-          <!-- arch curve inside gate (drawn as subtle arc on top of gap) -->
-          <path d="M 436,101 A 22,28 0 0 1 480,101" fill="#FF9933" opacity=".28"/>
-
-          <!-- Buildings leading to Taj -->
-          <rect x="515" y="128" width="28" height="52" fill="#138808" opacity=".13"/>
-          <rect x="547" y="118" width="20" height="62" fill="#FF9933" opacity=".13"/>
-          <rect x="572" y="132" width="36" height="48" fill="#000080" opacity=".12"/>
-          <rect x="614" y="122" width="16" height="58" fill="#138808" opacity=".13"/>
-
-          <!-- TAJ MAHAL (~x=720) — centerpiece -->
-          <!-- far minarets -->
-          <rect x="626" y="68"  width="10" height="92" fill="#FF9933" opacity=".32"/>
-          <ellipse cx="631" cy="66" rx="6" ry="9"     fill="#FF9933" opacity=".32"/>
-          <rect x="804" y="68"  width="10" height="92" fill="#FF9933" opacity=".32"/>
-          <ellipse cx="809" cy="66" rx="6" ry="9"     fill="#FF9933" opacity=".32"/>
-          <!-- near minarets -->
-          <rect x="660" y="84"  width="8"  height="76" fill="#FF9933" opacity=".28"/>
-          <ellipse cx="664" cy="83" rx="5" ry="7"     fill="#FF9933" opacity=".28"/>
-          <rect x="772" y="84"  width="8"  height="76" fill="#FF9933" opacity=".28"/>
-          <ellipse cx="776" cy="83" rx="5" ry="7"     fill="#FF9933" opacity=".28"/>
-          <!-- main platform -->
-          <rect x="645" y="132" width="150" height="48" fill="#FF9933" opacity=".28"/>
-          <!-- main dome (signature onion dome) -->
-          <path d="M674,132 C674,32 766,32 766,132 Z"  fill="#FF9933" opacity=".35"/>
-          <!-- finial -->
-          <line x1="720" y1="32" x2="720" y2="12" stroke="#FF9933" stroke-width="2.5" opacity=".4"/>
-          <circle cx="720" cy="10" r="4.5" fill="#FF9933" opacity=".4"/>
-
-          <!-- RIGHT CITY BUILDINGS -->
-          <rect x="840" y="122" width="24" height="58" fill="#138808" opacity=".14"/>
-          <rect x="868" y="112" width="28" height="68" fill="#FF9933" opacity=".14"/>
-          <rect x="900" y="128" width="18" height="52" fill="#000080" opacity=".13"/>
-
-          <!-- LOTUS TEMPLE suggestion (~x=960) -->
-          <path d="M928,165 Q940,118 960,105 Q980,118 992,165 Z" fill="#138808" opacity=".22"/>
-          <path d="M938,165 Q948,122 960,112 Q972,122 982,165 Z" fill="#138808" opacity=".18"/>
-          <path d="M920,165 Q942,128 960,118 Q978,128 1000,165 Z" fill="#138808" opacity=".14"/>
-
-          <!-- MORE RIGHT BUILDINGS -->
-          <rect x="1010" y="118" width="26" height="62" fill="#FF9933" opacity=".14"/>
-          <rect x="1040" y="102" width="20" height="78" fill="#000080" opacity=".13"/>
-          <rect x="1064" y="122" width="32" height="58" fill="#138808" opacity=".14"/>
-          <rect x="1100" y="112" width="22" height="68" fill="#FF9933" opacity=".14"/>
-          <rect x="1126" y="128" width="38" height="52" fill="#000080" opacity=".12"/>
-          <rect x="1168" y="108" width="18" height="72" fill="#138808" opacity=".14"/>
-          <rect x="1190" y="118" width="28" height="62" fill="#FF9933" opacity=".14"/>
-          <rect x="1222" y="132" width="22" height="48" fill="#138808" opacity=".13"/>
-          <rect x="1248" y="112" width="32" height="68" fill="#000080" opacity=".13"/>
-          <rect x="1284" y="122" width="18" height="58" fill="#FF9933" opacity=".14"/>
-          <rect x="1306" y="102" width="26" height="78" fill="#138808" opacity=".14"/>
-          <rect x="1336" y="118" width="50" height="62" fill="#FF9933" opacity=".13"/>
-          <rect x="1390" y="108" width="50" height="72" fill="#000080" opacity=".12"/>
-
-          <!-- Ground line (tricolor) -->
-          <rect x="0"   y="178" width="480" height="2" fill="#FF9933" opacity=".45"/>
-          <rect x="480" y="178" width="480" height="2" fill="#138808" opacity=".45"/>
-          <rect x="960" y="178" width="480" height="2" fill="#000080" opacity=".35"/>
-        </g>
-      </svg>
+    <div class="hero-art" aria-hidden="true">
+      <img src="artwork/orbital-field.svg" alt="" width="920" height="760" fetchpriority="high" />
+      <span class="art-coordinate coordinate-one">18° 32′ N &nbsp; / &nbsp; 73° 51′ E</span>
+      <span class="art-coordinate coordinate-two">SIGNAL FIELD &nbsp; 01 — 04</span>
     </div>
 
-    <div class="hero-orb-wrap">
-      <div class="hero-orb">
-        <div class="orb-ring r1"></div>
-        <div class="orb-ring r2"></div>
-        <div class="orb-ring r3"></div>
-        <div class="orb-core">
-          <svg width="56" height="56" viewBox="0 0 60 64" fill="none">
-            <rect x="22" y="6"  width="11" height="42" rx="5.5" fill="#F5C842" opacity=".95"/>
-            <rect x="37" y="2"  width="10" height="44" rx="5"   fill="#F5C842" opacity=".75"/>
-            <rect x="51" y="10" width="9"  height="36" rx="4.5" fill="#F5C842" opacity=".55"/>
-            <rect x="9"  y="16" width="13" height="32" rx="6.5" fill="#F5C842" opacity=".85"/>
-            <ellipse cx="30" cy="58" rx="28" ry="5" fill="#2E6B9A" opacity=".3"/>
-          </svg>
-          <span class="orb-label">Sign</span>
-        </div>
-      </div>
-    </div>
   </section>
 
   <!-- ── DEMO ── -->
   <section class="demo-section" id="demo">
-    <div class="section-label">✦ Live Demo</div>
+    <div class="section-label"><span class="section-index">01</span> Live Translator</div>
     <h2 class="section-heading">Try the <em>sign demo.</em></h2>
-    <p class="demo-intro">Choose the active validated sequence model when available, or the limited five-sign Browser KNN fallback. Start the camera once, then review a sequence before requesting a sentence suggestion.</p>
+    <p class="demo-intro">Start the camera, perform one sign clearly, and see the recognized sign and its configured demonstration sentence. This is a limited-vocabulary demo, not unrestricted ISL translation.</p>
+
+    <div class="demo-mode-switcher-bar" role="toolbar" aria-label="Translator mode switcher">
+      <span class="mode-switcher-label">Translation mode</span>
+      <div class="demo-mode-toggle-group">
+        <button type="button" class="demo-mode-btn active" id="btnModeNormal" onclick="setTranslatorMode('normal')">
+          <span class="mode-icon" aria-hidden="true"></span>
+          <span class="mode-title">Standard Translator</span>
+        </button>
+        <button type="button" class="demo-mode-btn" id="btnModeSentenceDemo" onclick="setTranslatorMode('sentence_demo')">
+          <span class="mode-icon" aria-hidden="true"></span>
+          <span class="mode-title">Sentence Demo Mode</span>
+          <span class="demo-badge-pill">DEMO</span>
+        </button>
+      </div>
+      <div class="demo-mode-status-indicator" id="demoModeIndicator">
+        <span class="mode-status-dot active"></span>
+        <span id="demoModeIndicatorText">Standard Translation Mode</span>
+      </div>
+    </div>
+
+    <div class="demo-disclosure-banner" id="demoDisclosureBanner" style="display:none;" role="note">
+      <span class="disclosure-icon" aria-hidden="true"></span>
+      <div class="disclosure-text">
+        <strong>Sentence Demo Mode:</strong> Maps recognized isolated signs to configured demonstration sentences.
+        <em>This is not unrestricted or general-purpose sentence translation.</em>
+      </div>
+    </div>
 
     <div class="demo-wrap">
 
       <!-- Feed -->
       <div class="feed-col">
         <div class="feed-frame" id="feedFrame">
-          <img id="videoStream" src="http://localhost:5000/video_feed" alt="Flask camera preview" />
+          <img id="videoStream" alt="Camera preview" style="display:none;" />
           <video id="knnVideo" autoplay playsinline muted
             style="display:none;"></video>
+          <div class="camera-placeholder" id="cameraPlaceholder">
+            <svg class="camera-placeholder-icon" aria-hidden="true" viewBox="0 0 32 24" fill="none"><rect x="1" y="2" width="22" height="20" rx="1" stroke="currentColor"/><path d="m23 9 8-5v16l-8-5" stroke="currentColor"/><circle cx="12" cy="12" r="4" stroke="currentColor"/></svg>
+            <strong>Your camera preview will appear here</strong>
+            <span>Select Start Camera when you are ready.</span>
+          </div>
           <div class="feed-overlay-top" id="feedOverlayTop" style="display:none;">
             <span class="live-dot"></span>
             <span class="live-text">LIVE</span>
           </div>
         </div>
 
-        <div class="bars-wrap">
-          <div class="bar-row">
-            <span class="bar-lbl">Buffer</span>
-            <div class="bar-track"><div class="bar-fill bf-gold" id="bufferBar"></div></div>
-          </div>
-          <div class="bar-row">
-            <span class="bar-lbl">Vote</span>
-            <div class="bar-track"><div class="bar-fill bf-teal" id="voteBar"></div></div>
+        <div class="live-feedback" aria-live="polite">
+          <div class="feedback-item"><span class="feedback-label">Camera</span><strong id="cameraStatus" data-state="off">Camera off</strong></div>
+          <div class="feedback-item"><span class="feedback-label">Hands</span><strong id="handStatus" data-state="idle">Waiting for hands</strong></div>
+          <div class="capture-progress" id="captureProgress" aria-label="Collected camera frames">
+            <div class="capture-progress-top"><span id="frameProgressText">0 of 30 frames</span><span id="frameProgressHint">Sign to begin</span></div>
+            <div class="capture-progress-track"><div class="capture-progress-fill" id="bufferBar"></div></div>
           </div>
         </div>
 
-        <button class="btn-cam" id="btnCam" onclick="toggleCamera()">
+        <button class="btn-cam" id="btnCam" onclick="toggleCamera(false)">
           <svg id="camIcon" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
           <span id="camLabel">Start Camera</span>
         </button>
 
-        <div class="knn-controls">
-          <p><strong>Train with webcam examples</strong></p>
-          <p>Start the camera, make each sign clearly, then collect its examples. Recognition requires examples for all five signs.</p>
-
-          <button type="button" onclick="trainKNN(0)">Train Hello</button>
-          <button type="button" onclick="trainKNN(1)">Train Thank You</button>
-          <button type="button" onclick="trainKNN(2)">Train Sorry</button>
-          <button type="button" onclick="trainKNN(3)">Train Yes</button>
-          <button type="button" onclick="trainKNN(4)">Train No</button>
-          <button type="button" onclick="startKNNPrediction()">Start Recognition</button>
-          <button type="button" onclick="saveKNNTrainingData()">Save Training Data</button>
-          <button type="button" onclick="exportKNNTrainingData()">Export Data</button>
-          <button type="button" onclick="document.getElementById('knnTrainingImport').click()">Import Data</button>
-          <input id="knnTrainingImport" type="file" accept=".json,application/json"
-            hidden onchange="importKNNTrainingData(this)" />
-          <button type="button" onclick="clearKNNTrainingData()">Clear Training Data</button>
-
-          <p id="knnStatus" role="status" aria-live="polite">Start the camera to begin.</p>
-        </div>
       </div>
 
       <!-- Output panel -->
-      <div class="output-col">
+      <div class="output-col" id="normalOutputCol">
+
+        <div class="recognition-stage" aria-live="polite">
+          <span class="feedback-label">Recognition</span>
+          <strong id="recognitionStatus" data-state="idle">Ready when you are</strong>
+        </div>
 
         <div class="out-card sign-card">
-          <div class="out-card-title">Detected Sign</div>
+          <div class="out-card-title">Recognized sign</div>
           <div class="sign-big" id="detectedWord">—</div>
           <div class="sign-meta" id="signMeta"></div>
+          <div class="demo-sign-meta" id="demoSignMeta">Waiting for a clear sign.</div>
         </div>
 
-        <div class="out-card">
-          <div class="out-card-title">Building Sentence</div>
-          <div class="building-text" id="buildingText">—</div>
+        <div class="out-card demo-sentence-card" id="demoSentenceCard">
+          <div class="out-card-title out-card-title-green">Translated sentence</div>
+          <div class="demo-sentence-display" id="demoSentenceDisplay">A configured sentence will appear here.</div>
+          <p class="demo-trigger-info" id="demoTriggerInfo">Perform a supported sign to begin.</p>
+          <div class="demo-cooldown-status" id="demoCooldownStatus">
+            <span class="cooldown-dot ready" id="demoCooldownDot"></span>
+            <span id="demoCooldownText">Ready for a sign</span>
+          </div>
+          <p class="speech-status" id="speechStatus" role="status" aria-live="polite">Speech ready when a sentence is available.</p>
+          <div class="lang-row">
+            <label class="lang-lbl" for="langSelect">Speech language</label>
+            <select id="langSelect" class="lang-sel" onchange="changeLanguage()">
+              <option value="en">English</option>
+              <option value="hi">हिन्दी (Hindi)</option>
+              <option value="bn">বাংলা (Bengali)</option>
+              <option value="ta">தமிழ் (Tamil)</option>
+              <option value="te">తెలుగు (Telugu)</option>
+              <option value="mr">मराठी (Marathi)</option>
+              <option value="gu">ગુજરાતી (Gujarati)</option>
+            </select>
+          </div>
+          <button type="button" class="act-btn act-speak" id="btnDemoSpeak" onclick="speakCurrentDemoSentence()">Speak sentence</button>
         </div>
 
-        <div class="out-card final-out-card" id="finalCard">
-          <div class="out-card-title out-card-title-green">✦ Final Output</div>
-          <div class="final-text" id="finalText"></div>
-          <p class="original-gloss" id="originalGloss"></p>
-        </div>
-
-        <div class="lang-row">
-          <label class="lang-lbl">Language</label>
-          <select id="langSelect" class="lang-sel" onchange="changeLanguage()">
-            <option value="en">English</option>
-            <option value="hi">हिन्दी (Hindi)</option>
-            <option value="bn">বাংলা (Bengali)</option>
-            <option value="ta">தமிழ் (Tamil)</option>
-            <option value="te">తెలుగు (Telugu)</option>
-            <option value="mr">मराठी (Marathi)</option>
-            <option value="gu">ગુજરાતી (Gujarati)</option>
-          </select>
-        </div>
-
-        <div class="action-grid">
-          <button class="act-btn act-confirm" onclick="finalizeSentence()">✓ Confirm</button>
-          <button class="act-btn act-speak"   onclick="speakOutput()">♪ Speak</button>
-          <button class="act-btn act-undo"    onclick="undoWord()">↩ Undo</button>
-          <button class="act-btn act-clear"   onclick="clearSentence()">✕ Clear</button>
-        </div>
+        <section class="quick-phrases" aria-labelledby="quickPhrasesTitle">
+          <div class="quick-phrases-heading">
+            <div>
+              <div class="out-card-title">Manual communication</div>
+              <h3 id="quickPhrasesTitle">Quick Phrases</h3>
+              <p>Choose a phrase to prepare it for speech. Your sign recognition stays separate.</p>
+            </div>
+          </div>
+          <div class="quick-phrase-categories" id="quickPhraseCategories" role="group" aria-label="Phrase categories"></div>
+          <div class="quick-phrase-list" id="quickPhraseList" aria-label="Phrase suggestions"></div>
+          <div class="quick-phrase-selection">
+            <div>
+              <span class="quick-phrase-selection-label">Selected phrase <span class="quick-phrase-origin">Manual</span></span>
+              <p id="quickPhraseSelected" aria-live="polite">Choose a phrase to see it here.</p>
+            </div>
+            <div class="quick-phrase-actions">
+              <button type="button" class="act-btn quick-phrase-clear" id="quickPhraseClear" disabled>Clear</button>
+              <button type="button" class="act-btn act-speak quick-phrase-speak" id="quickPhraseSpeak" disabled>Speak Phrase</button>
+            </div>
+          </div>
+          <p class="quick-phrase-status" id="quickPhraseStatus" role="status" aria-live="polite">Select a category and phrase.</p>
+        </section>
 
       </div>
     </div>
-    <section class="ai-sentence-panel" aria-labelledby="aiSentenceHeading">
-      <div class="section-label">✦ Optional local AI · Ollama</div>
+
+    <details class="advanced-details sentence-builder-tools">
+      <summary>Advanced tools · sentence builder controls</summary>
+      <div class="advanced-details-content sentence-builder-content">
+        <div class="out-card sentence-building-card">
+          <div class="out-card-title">Building Sentence</div>
+          <div class="building-text" id="buildingText">—</div>
+        </div>
+        <div class="out-card final-out-card" id="finalCard">
+          <div class="out-card-title out-card-title-green">Final output</div>
+          <div class="final-text" id="finalText"></div>
+          <p class="original-gloss" id="originalGloss"></p>
+        </div>
+        <div class="action-grid">
+          <button class="act-btn act-confirm" onclick="finalizeSentence()">Confirm</button>
+          <button class="act-btn act-speak" onclick="speakOutput()">Speak</button>
+          <button class="act-btn act-undo" onclick="undoWord()">Undo</button>
+          <button class="act-btn act-clear" onclick="clearSentence()">Clear</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="advanced-details">
+      <summary>Advanced tools · sentence mappings</summary>
+      <div class="advanced-details-content">
+        <div class="demo-options-row">
+          <label class="demo-autospeak-label">
+            <input type="checkbox" id="demoAutoSpeakCheck" checked onchange="toggleAutoSpeak(this.checked)" />
+            <span>Speak mapped sentences automatically</span>
+          </label>
+          <button type="button" class="demo-reload-btn" onclick="refreshDemoMappings()">Reload mappings</button>
+          <button type="button" class="act-btn act-clear" id="btnDemoClear" onclick="clearDemoSentence()">Clear mapped sentence</button>
+        </div>
+        <div class="demo-mappings-inspector">
+          <div class="demo-inspector-header">
+            <div>
+              <strong>Configured Sentence Mappings</strong> (<span id="demoMappingCount">0</span>)
+              <div class="demo-config-subtitle">File: <code>data/sentence_demo_mappings.json</code></div>
+            </div>
+            <button type="button" class="demo-editor-toggle-btn" id="btnToggleMappingEditor" onclick="toggleMappingEditor()">+ Add / Edit</button>
+          </div>
+
+          <!-- Quick Mapping Editor Form (collapsible) -->
+          <div class="demo-mapping-editor-form" id="demoMappingEditorForm" style="display:none;">
+            <div class="editor-fields-row">
+              <div class="editor-field">
+                <label for="newMappingSign">Sign Label</label>
+                <input type="text" id="newMappingSign" placeholder="e.g. help, water, sorry" />
+              </div>
+              <div class="editor-field" style="flex:2;">
+                <label for="newMappingSentence">Predefined Sentence</label>
+                <input type="text" id="newMappingSentence" placeholder="e.g. Could you please help me?" />
+              </div>
+            </div>
+            <div class="editor-actions-row">
+              <button type="button" class="mini-btn-save" onclick="saveNewMapping()">Save Mapping</button>
+              <button type="button" class="mini-btn-cancel" onclick="toggleMappingEditor(false)">Cancel</button>
+              <span class="editor-feedback" id="editorFeedback"></span>
+            </div>
+          </div>
+
+          <div class="demo-mappings-list" id="demoMappingsList">
+            <p class="empty-mappings-text">Loading mappings…</p>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="advanced-details" id="advancedRecognizerTools">
+      <summary>Advanced tools · recognizers and optional AI sentence builder</summary>
+      <section class="ai-sentence-panel" aria-labelledby="aiSentenceHeading">
+      <div class="section-label">Optional local AI · Ollama</div>
       <h3 id="aiSentenceHeading">AI Sentence Builder</h3>
-      <p class="ai-sentence-note">Collect stable predictions, review or correct each gloss, then request one sentence. This is an experimental limited-vocabulary aid, not complete ISL translation. AI suggestions are interpretations—not verified signs.</p>
+      <p class="ai-sentence-note">The active validated 13-sign sequence model is preferred; Browser KNN is retained as a Hello-only fallback. Collect stable predictions, review or correct each gloss, then request one sentence. This is not complete ISL translation. AI suggestions are interpretations—not verified signs.</p>
       <div class="ai-sentence-toolbar">
         <label for="sentenceRecognizer">Recognizer</label>
         <select id="sentenceRecognizer" class="lang-sel">
           <option value="browser_knn">Loading recognizers…</option>
         </select>
-        <label for="experimentalScope">Model scope</label>
-        <select id="experimentalScope" class="lang-sel">
-          <option value="shared">Shared</option>
-          <option value="personal">Personal</option>
-        </select>
       </div>
-      <p id="recognizerStateStatus" class="experimental-status" role="status" aria-live="polite">Loading current vocabulary and model state…</p>
-      <p id="aiProviderStatus" class="experimental-status" role="status" aria-live="polite">Checking local sentence model…</p>
+      <p class="experimental-status" role="status" aria-live="polite">Live model status and vocabulary scope are shown in Project status.</p>
+      <p id="aiProviderStatus" class="experimental-status" role="status" aria-live="polite">Optional local AI status is checked only when Advanced Tools are opened; the main translator does not require Ollama.</p>
+      <div class="ai-sequence-controls" role="group" aria-label="Advanced camera controls">
+        <button class="experimental-button" id="advancedCameraToggle" type="button" onclick="toggleCamera(true)">Start selected recognizer</button>
+      </div>
       <div class="ai-sequence-controls" role="group" aria-label="Sequence capture controls">
         <button class="experimental-button" id="startAiSequence" type="button">Start sequence</button>
         <button class="experimental-button" id="pauseAiSequence" type="button" disabled>Pause</button>
@@ -294,7 +284,7 @@
         <button class="experimental-button" id="clearAiSigns" type="button">Clear sequence</button>
         <button class="experimental-button" id="finishAiSentence" type="button" disabled>Finish Sentence</button>
       </div>
-      <p id="aiSentenceStatus" class="experimental-status" role="status" aria-live="polite">Select a recognizer and start sequence capture when ready.</p>
+      <p id="aiSentenceStatus" class="experimental-status" role="status" aria-live="polite">Start the camera; the active sequence model is selected when available.</p>
       <ol id="aiSignSequence" class="ai-sign-sequence" aria-label="Recognized signs to review"></ol>
       <p id="aiSequenceEmpty" class="experimental-status">No signs collected yet. Start the selected recognizer and perform signs.</p>
       <div class="ai-sentence-actions">
@@ -314,70 +304,78 @@
         </div>
         <p id="aiAcceptedStatus" class="experimental-status" role="status" aria-live="polite"></p>
       </div>
-    </section>
-    <p id="experimentalPrediction" class="experimental-status" role="status" aria-live="polite">Select a recognizer and start the camera to begin.</p>
+      </section>
+      <div class="knn-controls advanced-knn-controls">
+        <p><strong>Legacy Browser KNN · Hello fallback</strong></p>
+        <p>This legacy classifier uses its five browser-local classes internally; only Hello is accepted in the translator. It is not the primary recognizer.</p>
+        <p id="knnStatus" role="status" aria-live="polite">Select this fallback in Advanced Tools only if its saved examples are available.</p>
+      </div>
+      <p id="experimentalPrediction" class="experimental-status" role="status" aria-live="polite">Select the active sequence recognizer to view model status.</p>
+    </details>
   </section>
 
   <!-- ── FEATURES ── -->
   <section class="features-section" id="features">
     <div class="features-inner">
-      <div class="section-label">✦ Features</div>
-      <h2 class="section-heading">What makes it <em>work.</em></h2>
+      <div class="section-label"><span class="section-index">02</span> The system</div>
+      <div class="features-intro">
+        <h2 class="section-heading">Careful signals.<br /><em>Useful language.</em></h2>
+        <p class="section-intro">A limited-vocabulary research demonstration: each sign is reviewed as a prediction, then connected to an explicit sentence or optional local suggestion.</p>
+      </div>
       <div class="features-grid">
 
-        <div class="feature-card">
-          <div class="feature-icon">⚡</div>
+        <article class="feature-card">
+          <span class="feature-index">01 / RECOGNITION</span>
           <h3 class="feature-title">Two separate recognizers</h3>
           <p class="feature-desc">
-            Browser KNN is the fixed five-sign fallback. A current, validated sequence model can
-            use the saved vocabulary; unvalidated candidates are never live recognizers.
+            Browser KNN retains five classifier labels, but the translator accepts only Hello from that fallback. A current, validated sequence model can use saved vocabulary; unvalidated candidates are never live recognizers.
           </p>
-        </div>
+        </article>
 
-        <div class="feature-card">
-          <div class="feature-icon">🗣</div>
+        <article class="feature-card">
+          <span class="feature-index">02 / REVIEW</span>
           <h3 class="feature-title">Review before interpreting</h3>
           <p class="feature-desc">
             Stable predictions appear in an editable ordered sequence. Remove or correct labels
             before requesting a sentence suggestion.
           </p>
-        </div>
+        </article>
 
-        <div class="feature-card">
-          <div class="feature-icon">✦</div>
+        <article class="feature-card">
+          <span class="feature-index">03 / LANGUAGE</span>
           <h3 class="feature-title">Optional local sentence aid</h3>
           <p class="feature-desc">
             Ollama can suggest an English interpretation on request. Suggestions and recognition
             corrections are not verified translations.
           </p>
-        </div>
+        </article>
 
-        <div class="feature-card">
-          <div class="feature-icon">🎯</div>
+        <article class="feature-card">
+          <span class="feature-index">04 / DATA</span>
           <h3 class="feature-title">Save, then train explicitly</h3>
           <p class="feature-desc">
             Developer Studio recordings are saved separately. New examples do not change a model
             until you train, evaluate, and explicitly activate a candidate.
           </p>
-        </div>
+        </article>
 
-        <div class="feature-card">
-          <div class="feature-icon">🧠</div>
+        <article class="feature-card">
+          <span class="feature-index">05 / SEQUENCE</span>
           <h3 class="feature-title">Experimental sequence model</h3>
           <p class="feature-desc">
             It predicts one sign from each 30-frame window; stable labels are accumulated over time.
             This is not a continuous sign-language translation model.
           </p>
-        </div>
+        </article>
 
-        <div class="feature-card">
-          <div class="feature-icon">🌐</div>
+        <article class="feature-card">
+          <span class="feature-index">06 / LOCAL FIRST</span>
           <h3 class="feature-title">Local-first workflow</h3>
           <p class="feature-desc">
             The active recognizer uses the same browser camera stream. Flask supplies sentence
             controls and current model/vocabulary state; Developer Studio manages model candidates.
           </p>
-        </div>
+        </article>
 
       </div>
     </div>
@@ -386,14 +384,26 @@
   <!-- ── SIGN GLOSSARY ── -->
   <section class="glossary-section" id="glossary">
     <div class="glossary-inner">
-      <div class="section-label">✦ Vocabulary status</div>
-      <h2 class="section-heading">Labels that <em>evolve.</em></h2>
-      <p class="glossary-sub">
-        Current saved labels, sample counts, and session counts are available in Developer Studio.
-        The demo refreshes active model support from Flask; a saved label is not automatically
-        recognized, and labels are not gesture instructions.
-      </p>
-      <a class="btn-outline" href="/developer">View vocabulary and model state</a>
+      <div class="glossary-copy">
+        <div class="section-label"><span class="section-index">03</span> Vocabulary / model</div>
+        <h2 class="section-heading">A vocabulary in <em>motion.</em></h2>
+        <p class="glossary-sub">The active model and vocabulary are read from the local service. Saved labels are not automatically recognized; new examples require explicit training and validation.</p>
+        <a class="text-link" href="/developer">Open Developer Studio <span aria-hidden="true">↗</span></a>
+      </div>
+      <div class="model-summary">
+        <div class="model-summary-head">
+          <span class="micro-label">LIVE MODEL STATUS</span>
+          <label for="experimentalScope" class="scope-control">Vocabulary scope
+            <select id="experimentalScope" class="lang-sel">
+              <option value="shared">Shared</option>
+              <option value="personal">Personal</option>
+            </select>
+          </label>
+        </div>
+        <p id="projectModelStatus" class="model-primary-status" role="status" aria-live="polite">Checking active model status…</p>
+        <p id="projectVocabularyStatus" class="model-detail-status" role="status" aria-live="polite">Saved vocabulary and readiness will appear when the local service responds.</p>
+        <p id="recognizerStateStatus" class="model-detail-status" role="status" aria-live="polite">Loading current vocabulary and model state…</p>
+      </div>
     </div>
   </section>
 
@@ -401,12 +411,12 @@
   <section class="about-section" id="about">
     <div class="about-wrap">
       <div class="about-text">
-        <div class="section-label">✦ About</div>
+        <div class="section-label">About</div>
         <h2 class="section-heading">Bridging the <em>silence.</em></h2>
         <p class="about-para">
-          This project offers a five-label browser KNN fallback and an active sequence classifier
-          built from saved 30-frame, 378-feature landmark sequences when a compatible, validated
-          model has been activated. Neither path performs complete continuous ISL translation.
+          Browser KNN is retained as a five-label classifier, with Hello as its only accepted
+          translator result. The active sequence path uses saved 30-frame, 378-feature landmarks
+          when a compatible, validated model has been activated. Neither path performs continuous ISL translation.
         </p>
         <p class="about-para">
           Stable word predictions can be reviewed before an optional local Ollama sentence request.
@@ -423,46 +433,31 @@
   </section>
 
   <!-- ── PIPELINE ── -->
-  <section class="pipeline-section" id="pipeline">
-    <div class="section-label">✦ Pipeline</div>
-    <h2 class="section-heading">How it <em>flows.</em></h2>
+  <section class="pipeline-section" id="how-it-works">
+    <span id="pipeline" class="section-anchor" aria-hidden="true"></span>
+    <div class="section-label"><span class="section-index">04</span> How it works</div>
+    <h2 class="section-heading">From gesture <em>to voice.</em></h2>
+    <p class="section-intro">A limited-vocabulary pipeline. The system recognizes individual supported signs and maps accepted labels to configured sentences; it does not translate continuous ISL.</p>
     <div class="pipe-grid">
       <div class="pipe-card">
         <div class="pipe-num">01</div>
         <h3>Capture</h3>
-        <p>Choose the active validated sequence model or the limited Browser KNN fallback. Both share one browser webcam stream.</p>
+        <p>Camera frames are collected locally. The selected recognizer uses the browser camera stream.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">02</div>
-        <h3>Landmarks</h3>
-        <p>The experimental path extracts the established 378-feature landmarks for each of 30 frames.</p>
+        <h3>Landmark extraction</h3>
+        <p>The sequence path processes 30 frames into the established 378-feature landmark representation.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">03</div>
-        <h3>Stable word sequence</h3>
-        <p>Stable individual predictions accumulate in order; this is not continuous ISL translation.</p>
+        <h3>Sign recognition</h3>
+        <p>Confidence and hand-quality checks filter predictions. Stable individual signs can be reviewed in order.</p>
       </div>
       <div class="pipe-card">
         <div class="pipe-num">04</div>
-        <h3>Speak</h3>
-        <p>On request, local Ollama can suggest an English sentence for review and editing.</p>
-      </div>
-    </div>
-  </section>
-
-  <section class="how-section" id="how-it-works">
-    <div class="content-wrap">
-      <div class="section-label">How it works</div>
-      <h2 class="section-heading">A clear path from <em>sign to speech.</em></h2>
-      <p class="section-intro">Choose the recognizer explicitly, collect stable word predictions, review them, and request a sentence-level interpretation only when ready.</p>
-      <div class="how-grid">
-        <article class="how-card"><span>01</span><h3>Webcam input</h3><p>Allow camera access and collect examples for the five demo signs.</p></article>
-        <article class="how-card"><span>02</span><h3>Landmark processing</h3><p>The active sequence model extracts the same 30-frame, 378-feature landmark contract used by Developer Studio recordings.</p></article>
-        <article class="how-card"><span>03</span><h3>Sign classification</h3><p>The active validated sequence model predicts from saved vocabulary; the KNN fallback uses browser-collected examples for five fixed signs.</p></article>
-        <article class="how-card"><span>04</span><h3>Sentence &amp; speech</h3><p>The local AI suggestion is optional and editable; the original sequence stays visible and corrections remain suggestions.</p></article>
-      </div>
-      <div class="supported-signs" aria-label="Five supported demo signs">
-        <span>Hello</span><span>Thank You</span><span>Sorry</span><span>Yes</span><span>No</span>
+        <h3>Sentence and speech</h3>
+        <p>Accepted signs use configured sentence mappings. Optional local AI suggestions can be reviewed before speech.</p>
       </div>
     </div>
   </section>
@@ -472,7 +467,7 @@
       <div class="section-label">Project progress</div>
       <h2 class="section-heading">Built for a <em>live demonstration.</em></h2>
       <div class="progress-grid">
-        <article class="progress-card"><span class="status-tag status-ready">Available</span><h3>Browser-based KNN recognition</h3><p>Five fixed demo labels are supported; webcam examples are collected locally in the browser.</p></article>
+        <article class="progress-card"><span class="status-tag status-ready">Available</span><h3>Browser-based KNN fallback</h3><p>The five-label classifier is retained in the browser; only Hello is accepted as a translator result.</p></article>
         <article class="progress-card"><span class="status-tag status-ready">Available</span><h3>Sequence review and sentence aid</h3><p>Stable predictions can be corrected before an optional local Ollama request; interpretations are not verified translations.</p></article>
         <article class="progress-card"><span class="status-tag status-ready">Capture &amp; save</span><h3>Developer Studio</h3><p>Captures and saves reviewed landmark sequences locally for later model work.</p></article>
         <article class="progress-card"><span class="status-tag status-experimental">Experimental</span><h3>Expandable classifier</h3><p>Requires more independent capture sessions and further evaluation before it can be relied on.</p></article>
@@ -483,12 +478,15 @@
   <!-- ── FOOTER ── -->
   <footer class="footer">
     <div class="footer-inner">
-      <div class="footer-logo">
-        <span class="logo-star">✦</span>
+      <div class="footer-brand">
+        <span class="logo-star" aria-hidden="true"></span>
         <span class="logo-text">ISL Translator</span>
       </div>
-      <p class="footer-tagline">"Bridging silence, one sign at a time."</p>
-      <a class="developer-link" href="/developer">Developer Studio</a>
+      <p class="footer-tagline">A local research demonstration for supported Indian Sign Language signs.</p>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="#demo">Live demo</a><a href="#features">The system</a>
+        <a href="#progress">Project progress</a><a href="/developer">Developer Studio</a>
+      </nav>
     </div>
   </footer>
 

@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -95,6 +96,35 @@ class SequenceContractTests(unittest.TestCase):
 
 
 class VocabularyStoreTests(unittest.TestCase):
+    def test_training_examples_reads_sample_manifest_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = VocabularyStore(directory)
+            entry = VocabularyEntry("hello", 0, "Hello", "shared")
+            store.add_entry(entry)
+            session = CaptureSession.create(entry)
+            store.create_session(session)
+            sequence = np.zeros(SEQUENCE_SHAPE, dtype=np.float32)
+            store.save_sample(
+                session.session_id,
+                entry.entry_id,
+                sequence,
+                PREPROCESSING_VERSION,
+                "shared",
+            )
+            store.save_sample(
+                session.session_id,
+                entry.entry_id,
+                sequence + 1,
+                PREPROCESSING_VERSION,
+                "shared",
+            )
+            list_samples = store.list_samples
+            with patch.object(store, "list_samples", wraps=list_samples) as mocked:
+                examples = store.load_training_examples("shared")
+
+        self.assertEqual(len(examples), 2)
+        mocked.assert_called_once_with("shared")
+
     def test_records_and_sample_persist_with_scope_isolation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

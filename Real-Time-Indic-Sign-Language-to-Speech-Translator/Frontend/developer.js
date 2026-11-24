@@ -12,9 +12,13 @@
   const canvas = document.getElementById("captureCanvas");
   const context = canvas.getContext("2d", { willReadFrequently: false });
   const pending = [];
+  const builtinPending = [];
   const selectedSavedSamples = new Set();
   let stream = null;
   let activeDraft = null;
+  let activeBuiltinSession = null;
+  let sentenceMappingRequestId = 0;
+  let builtinMappingRequestId = 0;
   let capturing = false;
   let startingSession = false;
   let sessionSelectionUncertain = false;
@@ -57,7 +61,241 @@
     element.dataset.kind = kind;
   }
 
+  async function loadBuiltinLabels() {
+    try {
+      await refreshBuiltinTrainingData();
+      setMessage("builtinMappingStatus", "Choose an existing label to view or edit its sentence mapping.");
+    } catch (error) {
+      byId("builtinMappingLabel").replaceChildren(new Option("Built-in labels unavailable", ""));
+      byId("builtinCaptureLabel").replaceChildren(new Option("Built-in labels unavailable", ""));
+      setMessage("builtinMappingStatus", error.message, "error");
+      setMessage("builtinCaptureStatus", error.message, "error");
+    }
+  }
+
+  async function refreshBuiltinTrainingData() {
+    const result = await api("/developer/api/builtin-training-data");
+    const labels = result.labels || [];
+    for (const [id, prompt] of [
+      ["builtinMappingLabel", "Select a built-in label…"],
+      ["builtinCaptureLabel", "Select a built-in label…"],
+    ]) {
+      const select = byId(id);
+      const previous = select.value;
+      select.replaceChildren(new Option(prompt, ""));
+      for (const item of labels) select.add(new Option(item.label, item.label));
+      if (labels.some((item) => item.label === previous)) select.value = previous;
+    }
+    renderBuiltinLabelCounts(labels);
+    updateBuiltinCaptureControls();
+    return labels;
+  }
+
+  function renderBuiltinLabelCounts(labels) {
+    const container = byId("builtinSampleCounts");
+    container.replaceChildren();
+    container.className = "sample-list";
+    for (const item of labels) {
+      const row = document.createElement("article");
+      row.className = "builtin-label-row";
+      const label = document.createElement("strong");
+      label.className = "sample-title";
+      label.textContent = item.label;
+      const counts = document.createElement("span");
+      counts.className = "sample-meta";
+      counts.textContent = `${item.sample_count} sample(s) · ${item.session_count} session(s) with saved samples · ${item.capture_session_count} total session(s) started`;
+      const eligibility = document.createElement("span");
+      eligibility.className = "builtin-training-eligibility";
+      eligibility.textContent = item.session_count < 4
+        ? `${item.session_count}/4 sessions · need ${4 - item.session_count} more`
+        : `${item.session_count}/4 sessions · eligible`;
+      const actions = document.createElement("div");
+      actions.className = "builtin-label-actions";
+      const train = document.createElement("button");
+      train.type = "button";
+      train.className = "button button-secondary small-button";
+      train.textContent = "Train";
+      train.disabled = item.session_count < 4;
+      train.title = item.session_count < 4
+        ? `Disabled: needs ${4 - item.session_count} more independent session(s) with saved samples.`
+        : "Train a separate candidate with this label and all other eligible shared vocabulary data.";
+      train.addEventListener("click", () => {
+        trainBuiltinLabel(item, train).catch((error) =>
+          setMessage("builtinTrainingStatus", error.message, "error")
+        );
+      });
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button button-danger small-button";
+      remove.textContent = "Delete";
+      remove.disabled = item.sample_count === 0 && item.capture_session_count === 0;
+      remove.title = remove.disabled ? "No saved samples or recording sessions for this label." :
+        `Delete only ${item.label} built-in samples and sessions.`;
+      remove.addEventListener("click", () => {
+        deleteBuiltinLabelData(item).catch((error) =>
+          setMessage("builtinTrainingStatus", error.message, "error")
+        );
+      });
+      actions.append(train, remove);
+      row.append(label, counts, eligibility, actions);
+      container.append(row);
+    }
+    if (!labels.length) {
+      container.className = "sample-list empty-state";
+      container.textContent = "No built-in vocabulary labels were found.";
+    }
+  }
+
+  async function trainBuiltinLabel(item, button) {
+    if (item.session_count < 4) return;
+    button.disabled = true;
+    setMessage(
+      "builtinTrainingStatus",
+      `Building the combined dataset for ${item.label} → checking independent sessions → training and evaluating a separate candidate. The active model will not change…`
+    );
+    try {
+      const result = await api("/api/experimental/train", {
+        method: "POST",
+        body: JSON.stringify({ scope: "shared", target_label: item.label }),
+      });
+      const candidate = result.candidate;
+      const excluded = candidate.data?.excluded_labels || [];
+      const withheld = excluded.length
+        ? ` Excluded for insufficient data: ${excluded.map((entry) => `${entry.label} (${entry.session_count}/${entry.minimum_sessions} sessions)`).join(", ")}.`
+        : "";
+      setMessage(
+        "builtinTrainingStatus",
+        candidate.evaluation_ready
+          ? `${item.label} candidate ${candidate.artifact_id} trained and evaluated across separate recording sessions. Review the report; activation remains explicit.${withheld}`
+          : `${item.label} candidate ${candidate.artifact_id} was saved, but evaluation is insufficient for activation: ${candidate.insufficiencies.join(" ")}${withheld}`,
+        candidate.evaluation_ready ? "good" : "warning"
+      );
+      await refreshBuiltinTrainingData();
+      await refreshTrainingLab();
+      byId("trainingCandidate").value = candidate.artifact_id;
+      updateTrainingCandidateControls();
+    } catch (error) {
+      setMessage("builtinTrainingStatus", `Training failed: ${error.message}`, "error");
+      await refreshTrainingLab().catch(() => {});
+    } finally {
+      button.disabled = false;
+      await refreshBuiltinTrainingData().catch(() => {});
+    }
+  }
+
+  async function deleteBuiltinLabelData(item) {
+    const confirmed = window.confirm(
+      `Delete built-in training data for “${item.label}”? This permanently removes ` +
+      `${item.sample_count} saved sample(s) and ${item.capture_session_count} recording session(s) ` +
+      `from the dedicated built-in store. The vocabulary label, sentence mapping, drafts, legacy dataset, ` +
+      `and other labels' samples will remain.`
+    );
+    if (!confirmed) return;
+    setMessage("builtinTrainingStatus", `Deleting only ${item.label} built-in samples…`);
+    try {
+      const result = await api("/developer/api/builtin-training-data", {
+        method: "DELETE",
+        body: JSON.stringify({ label: item.label, confirmed: true }),
+      });
+      await refreshBuiltinTrainingData();
+      setMessage(
+        "builtinTrainingStatus",
+        `Deleted ${result.deleted_samples} sample(s) and ${result.deleted_sessions} recording session(s) for ${result.label}. Other labels and datasets were not changed.`,
+        "good"
+      );
+    } catch (error) {
+      setMessage("builtinTrainingStatus", error.message, "error");
+    }
+  }
+
+  function updateBuiltinCaptureControls() {
+    const label = byId("builtinCaptureLabel").value;
+    if (activeBuiltinSession && activeBuiltinSession.label !== label) {
+      activeBuiltinSession = null;
+      byId("builtinSessionInfo").textContent = label
+        ? "Start a new recording session for this label."
+        : "Select a label to begin.";
+    }
+    byId("startBuiltinSession").disabled = !label || capturing;
+    byId("captureBuiltinSequence").disabled = !stream || capturing ||
+      !activeBuiltinSession || activeBuiltinSession.label !== label;
+    byId("saveBuiltinSamples").disabled = capturing || builtinPending.length === 0;
+  }
+
+  async function startBuiltinCaptureSession() {
+    const label = byId("builtinCaptureLabel").value;
+    if (!label) throw new Error("Select a built-in vocabulary label first.");
+    const session = await api("/developer/api/builtin-training-data/sessions", {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    });
+    activeBuiltinSession = session;
+    byId("builtinSessionInfo").textContent =
+      `Session ${session.session_id.slice(0, 12)} · ${session.label}`;
+    await refreshBuiltinTrainingData();
+    setMessage("builtinCaptureStatus", "New session ready. Captured sequences will be reviewed before saving.");
+    updateBuiltinCaptureControls();
+  }
+
+  async function loadBuiltinMapping(label) {
+    const requestId = ++builtinMappingRequestId;
+    const textarea = byId("builtinMappingSentence");
+    const button = byId("saveBuiltinMapping");
+    if (!label) {
+      textarea.value = "";
+      textarea.disabled = true;
+      button.disabled = true;
+      setMessage("builtinMappingStatus", "Choose an existing label to view or edit its sentence mapping.");
+      return;
+    }
+    textarea.disabled = true;
+    button.disabled = true;
+    setMessage("builtinMappingStatus", "Loading mapping…");
+    try {
+      const result = await api(`/developer/api/builtin-sentence-mapping?label=${encodeURIComponent(label)}`);
+      if (requestId !== builtinMappingRequestId || byId("builtinMappingLabel").value !== label) return;
+      textarea.value = result.mapping?.sentence || "";
+      textarea.disabled = false;
+      button.disabled = false;
+      setMessage("builtinMappingStatus", result.message, result.mapping_saved ? "good" : "");
+    } catch (error) {
+      if (requestId === builtinMappingRequestId) setMessage("builtinMappingStatus", error.message, "error");
+    }
+  }
+
+  async function saveBuiltinMapping() {
+    const label = byId("builtinMappingLabel").value;
+    const sentence = byId("builtinMappingSentence").value.trim();
+    if (!label) {
+      setMessage("builtinMappingStatus", "Choose a built-in label first.", "error");
+      return;
+    }
+    if (!sentence) {
+      setMessage("builtinMappingStatus", "Enter a non-empty predefined sentence.", "error");
+      byId("builtinMappingSentence").focus();
+      return;
+    }
+    const requestId = ++builtinMappingRequestId;
+    const button = byId("saveBuiltinMapping");
+    button.disabled = true;
+    setMessage("builtinMappingStatus", "Saving built-in sentence mapping…");
+    try {
+      const result = await api("/developer/api/builtin-sentence-mapping", {
+        method: "PUT",
+        body: JSON.stringify({ label, sentence }),
+      });
+      if (requestId !== builtinMappingRequestId || byId("builtinMappingLabel").value !== label) return;
+      byId("builtinMappingSentence").value = result.mapping?.sentence || "";
+      setMessage("builtinMappingStatus", result.message, "good");
+    } catch (error) {
+      if (requestId === builtinMappingRequestId) setMessage("builtinMappingStatus", error.message, "error");
+    } finally {
+      if (requestId === builtinMappingRequestId) button.disabled = false;
+    }
+  }
+
   function updateActiveDraftDisplay() {
+    updateBuiltinCaptureControls();
     if (!activeDraft) return;
     byId("activeDraftMeta").textContent =
       `${activeDraft.scope} scope · label ID ${activeDraft.label_id} · ` +
@@ -93,10 +331,56 @@
     sessionSelectionUncertain = false;
     activeDraft = { ...draft, session_id: nextSession };
     byId("activeDraftTitle").textContent = draft.label;
+    loadSentenceMapping(activeDraft);
     updateActiveDraftDisplay();
     refreshDrafts().catch((error) => setMessage("draftMessage", error.message, "error"));
     refreshSavedSamples().catch((error) => setMessage("draftMessage", error.message, "error"));
     return true;
+  }
+
+  async function loadSentenceMapping(draft) {
+    const requestId = ++sentenceMappingRequestId;
+    const textarea = byId("activeSentenceMapping");
+    const button = byId("saveSentenceMapping");
+    textarea.disabled = true;
+    button.disabled = true;
+    setMessage("sentenceMappingStatus", "Loading sentence mapping…");
+    try {
+      const result = await api(
+        `/developer/api/drafts/${encodeURIComponent(draft.entry_id)}/sentence-mapping?scope=${encodeURIComponent(draft.scope)}`
+      );
+      if (requestId !== sentenceMappingRequestId || activeDraft?.entry_id !== draft.entry_id || activeDraft?.scope !== draft.scope) return;
+      textarea.value = result.mapping?.sentence || "";
+      textarea.disabled = false;
+      button.disabled = false;
+      setMessage("sentenceMappingStatus", result.message, result.state === "available" ? "good" : result.state === "pending_activation" ? "warning" : "");
+    } catch (error) {
+      if (requestId !== sentenceMappingRequestId) return;
+      setMessage("sentenceMappingStatus", error.message, "error");
+    }
+  }
+
+  async function saveSentenceMapping(draft, sentence) {
+    const requestId = ++sentenceMappingRequestId;
+    const textarea = byId("activeSentenceMapping");
+    const button = byId("saveSentenceMapping");
+    button.disabled = true;
+    setMessage("sentenceMappingStatus", "Saving sentence mapping…");
+    try {
+      const result = await api(
+        `/developer/api/drafts/${encodeURIComponent(draft.entry_id)}/sentence-mapping`,
+        { method: "PUT", body: JSON.stringify({ scope: draft.scope, sentence }) }
+      );
+      if (requestId !== sentenceMappingRequestId || activeDraft?.entry_id !== draft.entry_id || activeDraft?.scope !== draft.scope) return;
+      textarea.value = result.mapping?.sentence || "";
+      setMessage("sentenceMappingStatus", result.message, result.state === "available" ? "good" : "warning");
+      return true;
+    } catch (error) {
+      if (requestId === sentenceMappingRequestId) setMessage("sentenceMappingStatus", error.message, "error");
+      return false;
+    } finally {
+      if (requestId === sentenceMappingRequestId) button.disabled = false;
+    }
   }
 
   async function refreshDrafts() {
@@ -414,6 +698,7 @@
       byId("startCamera").disabled = true;
       byId("stopCamera").disabled = false;
       byId("captureButton").disabled = !activeDraft;
+      updateBuiltinCaptureControls();
       setMessage("captureMessage", "Camera ready. Frame samples are sent locally for landmark extraction.");
     } catch (error) {
       window.clearInterval(leaseHeartbeat);
@@ -441,6 +726,7 @@
     byId("startCamera").disabled = false;
     byId("stopCamera").disabled = true;
     byId("captureButton").disabled = true;
+    updateBuiltinCaptureControls();
     api("/developer/api/capture/lease", {
       method: "POST",
       body: JSON.stringify({ active: false }),
@@ -458,17 +744,14 @@
     });
   }
 
-  async function captureSequence() {
-    if (sessionSelectionUncertain) {
-      throw new Error("Refresh drafts and select the word again to confirm the active session.");
-    }
-    if (!activeDraft) throw new Error("Create or select a draft before capture.");
+  async function collectWebcamSequence() {
     if (!stream || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
       throw new Error("Enable the webcam before starting capture.");
     }
     capturing = true;
     updateActiveDraftDisplay();
     byId("captureButton").disabled = true;
+    byId("captureBuiltinSequence").disabled = true;
     byId("startCamera").disabled = true;
     byId("stopCamera").disabled = true;
     byId("captureProgress").value = 0;
@@ -498,24 +781,124 @@
         method: "POST",
         body: JSON.stringify({ frames }),
       });
-      pending.push({
-        entry_id: activeDraft.entry_id,
-        scope: activeDraft.scope,
-        sequence: result.sequence,
-        quality: result.quality,
-        previewFrames,
-      });
-      renderPending();
-      setMessage(
-        "captureMessage",
-        `Sequence passed: hands visible in ${result.quality.hand_frames}/${result.quality.frames} frames.`,
-        "good"
-      );
+      return { result, previewFrames };
     } finally {
       capturing = false;
       updateActiveDraftDisplay();
       byId("startCamera").disabled = Boolean(stream);
       byId("stopCamera").disabled = !stream;
+    }
+  }
+
+  async function captureSequence() {
+    if (sessionSelectionUncertain) {
+      throw new Error("Refresh drafts and select the word again to confirm the active session.");
+    }
+    if (!activeDraft) throw new Error("Create or select a draft before capture.");
+    const draft = activeDraft;
+    const { result, previewFrames } = await collectWebcamSequence();
+    pending.push({
+      entry_id: draft.entry_id,
+      scope: draft.scope,
+      sequence: result.sequence,
+      quality: result.quality,
+      previewFrames,
+    });
+    renderPending();
+    setMessage(
+      "captureMessage",
+      `Sequence passed: hands visible in ${result.quality.hand_frames}/${result.quality.frames} frames.`,
+      "good"
+    );
+  }
+
+  async function captureBuiltinSequence() {
+    const label = byId("builtinCaptureLabel").value;
+    const session = activeBuiltinSession;
+    if (!label || !session || session.label !== label) {
+      throw new Error("Select a built-in label and start a recording session first.");
+    }
+    const { result, previewFrames } = await collectWebcamSequence();
+    builtinPending.push({
+      label: session.label,
+      session_id: session.session_id,
+      sequence: result.sequence,
+      quality: result.quality,
+      previewFrames,
+    });
+    renderBuiltinPending();
+    setMessage(
+      "builtinCaptureStatus",
+      `Sequence reviewed: ${result.quality.hand_frames}/${result.quality.frames} frames contain hand landmarks. Save it to append it to ${session.label}.`,
+      "good"
+    );
+  }
+
+  function renderBuiltinPending() {
+    const container = byId("builtinPendingSamples");
+    container.replaceChildren();
+    byId("builtinPendingCount").textContent = `${builtinPending.length} pending`;
+    byId("saveBuiltinSamples").disabled = capturing || builtinPending.length === 0;
+    if (!builtinPending.length) {
+      container.className = "sample-list empty-state";
+      container.textContent = "Captured built-in sequences appear here for review before saving.";
+      updateBuiltinCaptureControls();
+      return;
+    }
+    container.className = "sample-list";
+    builtinPending.forEach((sample, index) => {
+      const row = document.createElement("article");
+      row.className = "sample-card";
+      const text = document.createElement("span");
+      text.className = "sample-meta";
+      text.textContent = `${sample.label} · session ${sample.session_id.slice(0, 12)} · ${sample.quality.hand_frames}/${sample.quality.frames} hand-visible frames · ${sample.quality.preprocessing_version}`;
+      const discard = document.createElement("button");
+      discard.type = "button";
+      discard.className = "button button-quiet small-button";
+      discard.textContent = "Discard pending";
+      discard.addEventListener("click", () => {
+        builtinPending.splice(index, 1);
+        renderBuiltinPending();
+      });
+      row.append(text, discard);
+      container.append(row);
+    });
+    updateBuiltinCaptureControls();
+  }
+
+  async function saveBuiltinSamples() {
+    if (!builtinPending.length) return;
+    const button = byId("saveBuiltinSamples");
+    button.disabled = true;
+    setMessage("builtinCaptureStatus", "Saving reviewed sequences to the separate built-in dataset…");
+    try {
+      while (builtinPending.length) {
+        const sample = builtinPending[0];
+        await api(
+          `/developer/api/builtin-training-data/sessions/${encodeURIComponent(sample.session_id)}/samples`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              sequence: sample.sequence,
+              preprocessing_version: PREPROCESSING_VERSION,
+            }),
+          }
+        );
+        builtinPending.shift();
+        renderBuiltinPending();
+      }
+      const labels = await refreshBuiltinTrainingData();
+      const selected = labels.find((item) => item.label === byId("builtinCaptureLabel").value);
+      setMessage(
+        "builtinCaptureStatus",
+        `Samples appended. ${selected?.label || "Built-in label"}: ${selected?.sample_count || 0} saved sample(s) across ${selected?.session_count || 0} recording session(s). Training has not started.`,
+        "good"
+      );
+    } catch (error) {
+      setMessage("builtinCaptureStatus", error.message, "error");
+    } finally {
+      button.disabled = builtinPending.length === 0;
+      updateBuiltinCaptureControls();
     }
   }
 
@@ -654,7 +1037,8 @@
       byId("trainModelCandidate").disabled = !canTrain;
       const selected = candidates.find((candidate) => candidate.artifact_id === select.value);
       byId("trainingCandidateStatus").textContent = selected
-        ? `Label map: ${selected.supported_label_count || selected.label_map?.length || 0}/${data.words.length} · ` +
+        ? `Training vocabulary (${selected.supported_label_count || selected.label_map?.length || 0} classes): ` +
+          `${(selected.label_map || []).map((item) => item.label).join(", ")} · ` +
           `${selected.evaluation_valid ? "complete session-separated validation report present" : "activation blocked: complete session-separated validation is missing"}`
         : "Candidates are never activated automatically.";
       updateTrainingCandidateControls();
@@ -690,6 +1074,47 @@
     }
   }
 
+  async function exportDataset() {
+    const scope = byId("trainingScope").value;
+    if (scope === "personal" && !window.confirm(
+      "This ZIP contains your private personal examples. Download the personal dataset?"
+    )) {
+      return;
+    }
+
+    const button = byId("exportDataset");
+    button.disabled = true;
+    setMessage("exportDatasetStatus", `Preparing the ${scope} dataset export…`);
+    try {
+      const response = await fetch(
+        `${API}/developer/api/dataset/export?scope=${encodeURIComponent(scope)}`
+      );
+      if (!response.ok) {
+        const result = await response.json().catch(() => ({}));
+        throw new Error(result.error || `Export failed (${response.status})`);
+      }
+
+      const archive = await response.blob();
+      const url = URL.createObjectURL(archive);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `isl-${scope}-dataset.zip`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      setMessage(
+        "exportDatasetStatus",
+        `Downloaded ${scope} dataset (${archive.size.toLocaleString()} bytes).`,
+        "good"
+      );
+    } catch (error) {
+      setMessage("exportDatasetStatus", error.message, "error");
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   async function activateModelCandidate() {
     const artifactId = byId("trainingCandidate").value;
     if (!artifactId) return;
@@ -702,6 +1127,7 @@
       });
       setMessage("trainingCandidateStatus", `Activated ${result.artifact_id}. The main translator will refresh the active model state automatically.`, "good");
       await refreshTrainingLab();
+      if (activeDraft) await loadSentenceMapping(activeDraft);
     } catch (error) {
       setMessage("trainingCandidateStatus", `Candidate was not activated: ${error.message}`, "error");
       await refreshTrainingLab().catch(() => {});
@@ -720,6 +1146,7 @@
     }
     setMessage("draftMessage", "Creating or opening draft…");
     try {
+      const sentence = byId("newWordSentence").value.trim();
       const result = await api("/developer/api/drafts", {
         method: "POST",
         body: JSON.stringify({
@@ -729,6 +1156,12 @@
       });
       if (!setActiveDraft(result.draft, result.session_id)) return;
       setMessage("draftMessage", `Draft ready: ${result.draft.label} (${result.draft.scope}).`, "good");
+      if (sentence) {
+        byId("activeSentenceMapping").value = sentence;
+        const saved = await saveSentenceMapping(result.draft, sentence);
+        if (saved) byId("newWordSentence").value = "";
+        else setMessage("draftMessage", "Draft created. The sentence mapping was not saved; retry it in the Sentence Mapping editor.", "warning");
+      }
     } catch (error) {
       setMessage("draftMessage", error.message, "error");
     }
@@ -741,6 +1174,14 @@
   byId("captureButton").addEventListener("click", () => {
     captureSequence().catch((error) => setMessage("captureMessage", error.message, "error"));
   });
+  byId("builtinCaptureLabel").addEventListener("change", updateBuiltinCaptureControls);
+  byId("startBuiltinSession").addEventListener("click", () => {
+    startBuiltinCaptureSession().catch((error) => setMessage("builtinCaptureStatus", error.message, "error"));
+  });
+  byId("captureBuiltinSequence").addEventListener("click", () => {
+    captureBuiltinSequence().catch((error) => setMessage("builtinCaptureStatus", error.message, "error"));
+  });
+  byId("saveBuiltinSamples").addEventListener("click", saveBuiltinSamples);
   byId("saveDraft").addEventListener("click", () => {
     saveDraftSamples().catch((error) => setMessage("draftMessage", error.message, "error"));
   });
@@ -757,8 +1198,23 @@
     refreshTrainingLab().catch(() => {});
   });
   byId("trainingCandidate").addEventListener("change", updateTrainingCandidateControls);
+  byId("exportDataset").addEventListener("click", exportDataset);
   byId("trainModelCandidate").addEventListener("click", trainModelCandidate);
   byId("activateModelCandidate").addEventListener("click", activateModelCandidate);
+  byId("saveSentenceMapping").addEventListener("click", () => {
+    if (!activeDraft) return;
+    const sentence = byId("activeSentenceMapping").value.trim();
+    if (!sentence) {
+      setMessage("sentenceMappingStatus", "Enter a non-empty predefined sentence.", "error");
+      byId("activeSentenceMapping").focus();
+      return;
+    }
+    saveSentenceMapping(activeDraft, sentence);
+  });
+  byId("builtinMappingLabel").addEventListener("change", (event) => {
+    loadBuiltinMapping(event.currentTarget.value);
+  });
+  byId("saveBuiltinMapping").addEventListener("click", saveBuiltinMapping);
   byId("refreshDrafts").addEventListener("click", () => {
     refreshDrafts().catch((error) => setMessage("draftMessage", error.message, "error"));
   });
@@ -773,4 +1229,5 @@
 
   refreshDrafts().catch((error) => setMessage("draftMessage", error.message, "error"));
   refreshTrainingLab().catch(() => {});
+  loadBuiltinLabels();
 })();

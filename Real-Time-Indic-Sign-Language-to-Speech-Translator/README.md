@@ -13,7 +13,7 @@
 
 Indian Sign Language is the primary mode of communication for millions of Deaf and Hard-of-Hearing individuals across India, yet very few real-time tools exist to bridge the gap between ISL users and non-signers. This project addresses that gap.
 
-The project has two separate recognition paths. The main web demo uses a browser-side KNN image classifier for five fixed signs. Developer Studio records MediaPipe Holistic landmarks as 30-frame × 378-feature sequences for the experimental expandable classifier. A legacy Flask camera path can use the optional BiLSTM model. The AI Sentence Builder is a separate, optional Ollama feature that forms an English sentence from a reviewed sequence; it does not change sign predictions. The existing sentence workflow and optional Groq grammar refinement remain separate.
+The main web demo prefers the current validated Developer Studio sequence model. It extracts MediaPipe Holistic landmarks using the `isl-holistic-30x378-v1` contract and sends 30 × 378 windows through the matching sequence-model inference path. A legacy browser KNN remains an optional Hello fallback; non-Hello KNN predictions are not added to the translator. Developer Studio owns data capture, candidate training, evaluation, and activation. A separate legacy Flask camera path can use the optional BiLSTM model. The sentence controls and optional speech remain connected to accepted recognition; the Ollama Sentence Builder is an optional additional sentence suggestion and does not change model predictions.
 
 ---
 
@@ -23,15 +23,19 @@ The project has two separate recognition paths. The main web demo uses a browser
 %%{init: {'theme': 'base', 'themeVariables': {'fontSize': '11px'}, 'flowchart': {'nodeSpacing': 30, 'rankSpacing': 40}}}%%
 graph TD
     A(["🤟 ISL Signer"]):::signer -->|webcam| B["Browser camera"]:::capture
-    B --> F["Browser KNN<br/>5 fixed signs"]:::model
-    F --> G["Sentence builder<br/>confirm · undo · speak"]:::vote
+    B --> F["MediaPipe Holistic<br/>30 × 378 contract"]:::mediapipe
+    F --> J["Active validated sequence model"]:::branch
+    B --> L["Legacy Browser KNN<br/>Hello fallback"]:::model
+    J --> G["Sentence builder<br/>confirm · undo · speak"]:::vote
+    L --> G
     G -->|existing optional grammar| H["Groq grammar service"]:::llm
     G -->|user-requested sentence| K["Local Ollama Sentence Builder"]:::llm
     H --> I(["Speech output"]):::speech
     K --> I
     A -->|Developer Studio webcam| C["MediaPipe Holistic"]:::mediapipe
     C -->|30 × 378 sequence| E["Saved local vocabulary examples"]:::feature
-    E --> J["Experimental NumPy classifier<br/>separate candidate and evaluation"]:::branch
+    E --> M["Candidate training and evaluation"]:::branch
+    M -->|explicit activation| J
 
     classDef signer   fill:#FF9933,stroke:#cc7000,color:#fff,font-weight:bold
     classDef capture  fill:#FFF3E0,stroke:#FF9933,color:#7a3a00
@@ -50,9 +54,9 @@ graph TD
 
 | Feature | Description |
 |---|---|
-| 🎯 **ISL Sign Recognition** | Browser KNN recognizes five fixed signs; the legacy model and scripts cover a wider vocabulary |
+| 🎯 **ISL Sign Recognition** | Defaults to the active validated sequence model; the legacy Browser KNN is restricted to Hello output |
 | 🗣 **7 Indian Languages** | English, Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati |
-| ⚡ **Real-Time Recognition** | Browser KNN and experimental sequence recognition; legacy server-side MediaPipe remains optional |
+| ⚡ **Real-Time Recognition** | 30 × 378 sequence recognition with the matching preprocessing/model pipeline; legacy server-side BiLSTM remains separate |
 | 🧠 **Legacy BiLSTM** | Optional Keras model captures forward and backward gesture motion |
 | 🗳 **Prediction Stability** | Legacy server mode uses 4/6 frame agreement; browser KNN confirms over multiple frames |
 | ✍️ **AI Grammar Correction** | Groq LLaMA 3.1 converts ISL gloss into natural sentences |
@@ -74,7 +78,7 @@ Real-Time-Indic-Sign-Language-to-Speech-Translator/
 ├── knn-recognizer.js               # Browser classifier source
 ├── Frontend/
 │   ├── index.html                  # Main translator UI
-│   ├── app.js                      # Browser KNN, sequence review, and sentence UI
+│   ├── app.js                      # Sequence recognition, review, and sentence UI
 │   ├── styles.css                  # Main translator styles
 │   ├── knn-recognizer.bundle.js    # Checked-in browser classifier runtime
 │   ├── sequence-accumulator.js     # Shared sequence review logic
@@ -173,24 +177,19 @@ The local model may be unavailable or return an invalid response; in either case
 
 ### Option A — Web App (Recommended)
 
-The Windows setup above starts the Flask app, which serves the frontend; no separate frontend server is required. The Python dependencies are listed in `requirements.txt`; the separate YOLOv8 experiment uses its own environment. For the browser KNN recognizer:
+The Windows setup above starts the Flask app, which serves the frontend; no separate frontend server is required. The Python dependencies are listed in `requirements.txt`; the separate YOLOv8 experiment uses its own environment. Select **Start Camera** to begin the browser camera and automatically use the compatible active sequence model when available. No separate recognizer selection or sequence-start action is needed for this main workflow. The page shows camera and hand status, a 30-frame first-window counter, and distinct collection/inference states. Active-model status checks for the translator do not enumerate candidate models; candidate inspection remains in Developer Studio. After a successful confident prediction it displays the isolated sign and configured demonstration sentence; mapped sentences are spoken automatically by default and can also be spoken with the sentence button. Model scores are raw scores, not calibrated accuracy. Ollama is optional and is checked only when Advanced Tools are opened. No end-user training is required.
 
-1. Click **Start Camera** and wait for the browser recognizer model to load.
-2. Perform each sign and click its matching training button: **Hello**, **Thank You**, **Sorry**, **Yes**, and **No**. Each completed training run collects 30 webcam examples for that class and saves them in this browser.
-3. Click **Start Recognition** after all five classes have examples. Recognition requires at least 5 examples for each sign and confirms a sign over multiple frames.
-4. Recognized words are added to the existing **Building Sentence** flow; use **Confirm**, **Clear**, **Undo**, language selection, and **Speak** as usual.
+For live performance diagnostics, open the browser developer console before signing and filter for **`[ISL recognition timing]`** or **`[ISL recognizer status timing]`**. The recognizer log reports active-model/status loading time. Each prediction window reports measured frame collection rate, client request and window-to-result time, model/state validation, classifier loading, MediaPipe extraction, model inference, hand-quality rejection rate, non-confident windows, and release/cooldown state. These values are measured on the current device and should be collected with the actual webcam; dummy-frame timings are not representative. Status refreshes are serialized and time out with an explicit message after 20 seconds rather than leaving the recognizer selector loading indefinitely.
 
-Training data is restored from IndexedDB when the page is reopened. Use **Save Training Data** to save the currently loaded examples, **Export Data** to download a portable JSON backup, **Import Data** to restore a backup, or **Clear Training Data** to remove the saved and loaded examples (confirmation required). The backup contains the original 227×227 PNG examples and class labels, not internal classifier tensors.
-
-The browser KNN learns only from examples you collect; it is not a pretrained ISL sign model. The reserved `OTHER` class is not trainable and is never added to the sentence; low-confidence or non-sign predictions are rejected. Its camera and classifier run in the browser and do not use the Python Keras model. Do not use the browser and Flask camera paths at the same time.
+The legacy Browser KNN is an optional Hello fallback. The main translator accepts only its `Hello` output; the other KNN labels are ignored. Its legacy classifier still uses the stored five-class examples when that fallback is explicitly selected, so those examples can affect its internal scores; they are not initialized or used by the active sequence-model path. It can work only when compatible legacy examples are already available in that browser's local IndexedDB. The normal translator no longer exposes KNN training, import, export, or data-clearing controls. If the fallback cannot start, use a compatible active sequence model. Do not use the Browser KNN and Flask camera paths at the same time.
 
 The current five isolated-word classes do not encode grammar or support arbitrary sentence translation. The sentence builder preserves the original recognized-word sequence, removes only consecutive duplicate words from finalized display text, and uses existing grammar correction only for broader vocabulary sequences when its output preserves every recognized token and only adds limited linking words. Add useful ISL vocabulary next for pronouns and subjects, common action verbs (such as want, need, go, eat, and drink), question words, negation, time, places, and frequently signed objects.
 
-### Main website — sequence review
+### Advanced Tools — sequence review
 
-The **AI Sentence Builder** is separate from the existing sentence controls. Choose **Browser KNN** or a current active validated sequence model, start the shared browser camera once, then use **Start sequence**. Stable sign predictions are collected in order; pause, undo, remove, correct, or clear them before selecting **Finish Sentence**. That sends one reviewed sequence to the configured local Ollama model. The original predictions stay visible, and any AI interpretation or recognition correction is a suggestion—not a verified translation. If Ollama is unavailable, recognition and the existing sentence workflow remain usable.
+Open the collapsed **Advanced Tools** sections to select the optional Browser KNN Hello fallback, operate its camera, review stable sign predictions in order, or use the existing sentence builder controls. Pause, undo, remove, or correct labels before using the sentence controls. **Finish Sentence** optionally sends one reviewed sequence to the configured local Ollama model. The original predictions stay visible, and any AI interpretation or user correction is not a verified translation. If no compatible active model is available, the main translator reports that recognition cannot start; candidates must be prepared and activated in Developer Studio. If Ollama is unavailable, recognition and the existing sentence workflow remain usable.
 
-The main page refreshes saved vocabulary and active-model state on load, on return to the tab, and periodically while open. The translator uses only a validated active model whose complete label map and training-data fingerprint match the current saved data. Candidates are not selectable for live inference. Newly saved examples are not learned automatically: training a candidate, evaluating it on independent sessions, and activating it are distinct explicit steps managed in Developer Studio. The active sequence classifier predicts individual signs from successive 30-frame windows; it is not a continuous sign-language model. Browser KNN remains a separate five-sign fallback.
+The main page refreshes saved vocabulary and active-model state on load, on return to the tab, and periodically while open. The translator uses only a validated active model whose complete label map, preprocessing contract, and training-data fingerprint match the current saved data. Candidates are not selectable for live inference. Newly saved examples are not learned automatically: training a candidate, evaluating it on independent sessions, and activating it are distinct explicit steps managed in Developer Studio. The active sequence classifier predicts individual signs from successive 30-frame windows; it is not a continuous sign-language model. The legacy Browser KNN is separate and accepted only as a Hello fallback; its other classes still influence internal KNN scores when the fallback is explicitly used.
 
 The Flask development server binds to `127.0.0.1`; the app is available on this computer at `http://localhost:5000`.
 
@@ -198,7 +197,9 @@ The Flask development server binds to `127.0.0.1`; the app is available on this 
 
 Open **`http://localhost:5000/developer`** while the Flask app is running. Create or resume a word in either **Shared** or **Personal** scope, enable the camera, capture a complete 30-frame sequence, review it, then save accepted examples. To record independent examples for the same word, select **Start New Session** before capturing; existing examples stay in their original sessions. The interface shows the active session and sample count. Shared and personal records are stored separately.
 
-Saved vocabulary, session manifests, and landmark arrays live under `data/vocabulary_drafts/`. They are local files and are ignored by Git. The scopes are storage categories on this computer, not a team sync service. GitHub does not synchronize runtime vocabulary between teammates. Share data only through a separately approved, access-controlled export or storage mechanism.
+Saved vocabulary, session manifests, and landmark arrays live under `data/vocabulary_drafts/`. They are local files and are ignored by Git. The scopes are storage categories on this computer, not a team sync service. GitHub does not synchronize runtime vocabulary between teammates. In Developer Studio → Training Lab, select a scope and choose **Export selected-scope dataset** to download a ZIP containing only that scope. Personal exports require confirmation; never share them unless you have permission.
+
+The ZIP contains `labels.json` (ordered by stable label ID), `dataset.json` (preprocessing version, shape, hashes, sample/session metadata, dataset fingerprint, and reproducible split settings), and one `.npy` sequence per saved example. Each sequence is validated as `float32` `(30, 378)` using `isl-holistic-30x378-v1`. Once every label has at least four independent sessions, the manifest records deterministic train/validation assignments grouped by session (seed 42); until then samples remain unassigned and evaluation is marked not ready. Camera frames and the other storage scope are never included.
 
 Creating a vocabulary word does not add it to the fixed browser KNN classes. Use the Training Lab in Developer Studio to train a separate candidate from saved examples. Activation requires a complete current vocabulary map, an unchanged training-data fingerprint, compatible preprocessing, and a complete session-separated confusion report. The translator refreshes the active state automatically; it never activates candidates by itself.
 
@@ -206,7 +207,9 @@ Creating a vocabulary word does not add it to the fixed browser KNN classes. Use
 
 The repository includes `models/isl_model_solo.keras` and the MediaPipe assets under `mediapipe_models/`; permission to distribute these assets has been confirmed by the project owner. Preserve their existing paths and filenames and the accompanying third-party attribution/model-card notices. The app supports `ISL_KERAS_MODEL_PATH` and `ISL_HOLISTIC_MODEL_PATH` in a local, ignored `.env` file for authorized external copies. `.env.example` contains only an API-key placeholder, default optional Ollama settings, and blank model-path settings; never put real credentials or private paths in tracked files.
 
-The Keras file is used by the legacy Flask-side BiLSTM recognition path. If it is absent, Flask still serves the main website and browser KNN; the Flask camera recognition action reports that its model is unavailable. The MediaPipe `holistic_landmarker.task` file is required for Developer Studio capture, experimental live landmark capture, and the legacy Flask camera. The seven separate `.tflite` files are retained at their original paths as distributed MediaPipe assets; the current application calls the bundled Holistic task rather than loading those component files individually. Do not distribute any private recordings used for training.
+The currently active Developer Studio candidate and vocabulary are runtime data under the ignored `data/vocabulary_drafts/` directory, not repository files. A clean checkout or ZIP therefore does not automatically contain this worktree's active 13-class candidate. To use sequence recognition elsewhere, provision an approved compatible candidate and matching vocabulary through the existing Developer Studio workflow; otherwise the interface reports that no compatible model is active.
+
+The Keras file is used by the legacy Flask-side BiLSTM recognition path. If it is absent, Flask still serves the main website and the legacy Hello fallback; the Flask camera recognition action reports that its model is unavailable. The MediaPipe `holistic_landmarker.task` file is required for Developer Studio capture and live sequence inference, as well as the legacy Flask camera. The seven separate `.tflite` files are retained at their original paths as distributed MediaPipe assets; the current application calls the bundled Holistic task rather than loading those component files individually. Do not distribute any private recordings used for training.
 
 ### Option B — Desktop Script
 

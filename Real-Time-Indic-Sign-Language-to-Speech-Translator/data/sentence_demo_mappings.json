@@ -1,0 +1,22 @@
+{
+  "$schema_version": 1,
+  "description": "Configurable Sentence Demo Mode mappings for Indian Sign Language Translator. Maps verified sign triggers to predefined demonstration sentences. This mode demonstrates intent-based phrase mapping and is not unrestricted or general-purpose sentence translation.",
+  "instructions": "Add, edit, or remove mappings in the 'mappings' object below. Keys must match labels in the saved vocabulary. Pending labels are not recognizable until a compatible model is trained, evaluated, and activated. Sentences must be non-empty strings. Any number of mappings is supported.",
+  "mappings": {
+    "help": "Could you please help me?",
+    "water": "May I please have a glass of water?",
+    "bathroom": "Excuse me, where is the restroom?",
+    "food": "I am hungry and need something to eat.",
+    "thank you very much": "Thank you so much for your assistance.",
+    "sorry": "I apologize for the misunderstanding.",
+    "please": "Please give me a moment.",
+    "goodbye": "Goodbye, have a wonderful day!",
+    "yes": "Yes, that is correct.",
+    "no": "No, thank you.",
+    "what": "Could you explain what is happening?",
+    "where": "Could you tell me where to go?",
+    "okay": "Everything is okay, thank you.",
+    "hello": "Hello! Welcome to our sign language demonstration.",
+    "Doctor": "I need a doctor."
+  }
+}

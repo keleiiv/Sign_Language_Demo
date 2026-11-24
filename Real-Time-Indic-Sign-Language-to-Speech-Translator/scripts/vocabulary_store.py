@@ -478,7 +478,8 @@ class VocabularyStore:
                 for session in self.list_sessions(scope)
             }
             examples = []
-            for sample in self.list_samples(scope):
+            samples = self.list_samples(scope)
+            for sample in samples:
                 if sample.scope != scope:
                     raise ValueError(
                         f"Sample {sample.sample_id} is registered in the wrong scope"
@@ -498,7 +499,7 @@ class VocabularyStore:
                     )
                 examples.append(
                     TrainingExample(
-                        sequence=self.load_sample(sample, scope),
+                        sequence=self._load_sample_payload(sample, scope),
                         label_id=entry.label_id,
                         label=entry.label,
                         scope=scope,
@@ -520,6 +521,11 @@ class VocabularyStore:
             raise ValueError("Sample cannot be loaded from a different scope")
         if sample not in self.list_samples(scope):
             raise ValueError(f"Sample is not registered in {scope} scope")
+        return self._load_sample_payload(sample, scope)
+
+    def _load_sample_payload(self, sample: Sample, scope: str) -> np.ndarray:
+        if sample.scope != scope:
+            raise ValueError("Sample cannot be loaded from a different scope")
         path = self._scope_root(scope) / "samples" / sample.file_name
         data = path.read_bytes()
         if hashlib.sha256(data).hexdigest() != sample.sha256:

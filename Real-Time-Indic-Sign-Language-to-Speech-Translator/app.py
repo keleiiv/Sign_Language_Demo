@@ -13,8 +13,10 @@ Then open: http://localhost:5000
 import os
 import base64
 import binascii
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import ipaddress
+import io
 import json
 import queue
 import re
@@ -26,6 +28,7 @@ except ImportError:
 import tempfile
 import threading
 import time
+import zipfile
 from collections import Counter, deque
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -33,7 +36,7 @@ from urllib.parse import urlsplit
 import cv2
 import mediapipe as mp
 import numpy as np
-from flask import Flask, Response, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python import vision as mv
@@ -45,6 +48,7 @@ from scripts.sequence_contract import (
     extract_frame_features,
 )
 from scripts.capture_validation import validate_capture_sequence
+from scripts.capture_validation import LEFT_HAND_START, RIGHT_HAND_START
 from scripts.ai_sentence_builder import (
     OllamaSentenceBuilder,
     OllamaUnavailableError,
@@ -55,13 +59,19 @@ from scripts.expandable_classifier import (
     InsufficientDataError,
     MIN_EVALUATION_SESSIONS_PER_CLASS,
     MIN_TRAIN_SESSIONS_PER_CLASS,
+    VALIDATION_FRACTION,
     activate_artifact,
+    build_integrated_training_data,
+    canonical_label_key,
     dataset_fingerprint,
     list_artifacts,
     load_artifact,
     split_by_session,
+    source_dataset_fingerprints,
     train_and_evaluate,
 )
+from scripts.sentence_demo_manager import SentenceDemoManager
+from scripts.builtin_vocabulary_store import BuiltinVocabularyStore
 from scripts.vocabulary_store import (
     CaptureSession,
     VocabularyEntry,
@@ -81,7 +91,16 @@ FEATURES_DIR   = ROOT / "data" / "extracted_features"
 FRONTEND_DIR   = ROOT / "Frontend"
 VOCABULARY_DIR = ROOT / "data" / "vocabulary_drafts"
 VOCABULARY_STORE = VocabularyStore(VOCABULARY_DIR)
+BUILTIN_VOCABULARY_STORE = BuiltinVocabularyStore(
+    ROOT / "data" / "builtin_vocabulary_training",
+    labels_provider=lambda: _base_label_names(),
+)
+_experimental_training_lock = threading.Lock()
+_experimental_training_jobs = set()
 AI_SENTENCE_BUILDER = OllamaSentenceBuilder()
+SENTENCE_DEMO_CONFIG = os.environ.get("ISL_SENTENCE_MAPPINGS_PATH") or str(
+    ROOT / "data" / "sentence_demo_mappings.json"
+)
 
 # ── Sentence builder params ───────────────────────────────────────────────────
 CONFIDENCE_THRESHOLD = 0.60
@@ -337,6 +356,10 @@ _state = {
     "lang_code":          "en",
     "camera_active":      False,
     "hands_present":      False,
+    "sentence_demo_mode": False,
+    "sentence_demo_sentence": "",
+    "sentence_demo_trigger": "",
+    "sentence_demo_trigger_time": 0.0,
 }
 
 _labels          = []
@@ -346,6 +369,15 @@ _current_frame   = None   # latest annotated JPEG bytes for MJPEG stream
 _lock            = threading.Lock()
 _camera_thread   = None
 _developer_capture_lease_until = 0.0
+
+# Keep the prediction task on one worker thread: Flask handles requests on
+# different threads, while MediaPipe Tasks should not be shared across them.
+# This instance is separate from the independent Flask camera-thread instance.
+_predict_holistic = None
+_predict_executor = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="isl-holistic-predict",
+)
 
 # Dark placeholder frame sent while camera is not yet started
 def _make_placeholder():
@@ -506,6 +538,9 @@ def _camera_loop(camera_index=0):
             if now - last_hand_t > 0.5:
                 sequence.clear()
                 vote_window.clear()
+                with _lock:
+                    if _state.get("sentence_demo_mode", False):
+                        _state["sentence_demo_trigger"] = ""
 
         # Auto-finalize
         if sentence_words and now - last_hand_t > SENTENCE_TIMEOUT and now > cooldown_t:
@@ -541,10 +576,22 @@ def _camera_loop(camera_index=0):
 
             if top_vote_cnt >= VOTE_THRESHOLD:
                 with _lock:
-                    if not _state["sentence_words"] or _state["sentence_words"][-1] != top_vote_word:
-                        _state["sentence_words"].append(top_vote_word)
-                        sentence_words = _state["sentence_words"]
-                        print(f"  + {top_vote_word}")
+                    if _state.get("sentence_demo_mode", False):
+                        mapped = SENTENCE_DEMO_MANAGER.lookup_sentence(top_vote_word)
+                        if mapped:
+                            last_trig = _state.get("sentence_demo_trigger", "")
+                            last_time = _state.get("sentence_demo_trigger_time", 0.0)
+                            if last_trig != top_vote_word or (now - last_time > 3.0):
+                                _state["sentence_demo_sentence"] = mapped["sentence"]
+                                _state["sentence_demo_trigger"] = top_vote_word
+                                _state["sentence_demo_trigger_time"] = now
+                                speak(mapped["sentence"], _state["lang_code"])
+                                print(f"  [Sentence Demo] {top_vote_word} -> {mapped['sentence']}")
+                    else:
+                        if not _state["sentence_words"] or _state["sentence_words"][-1] != top_vote_word:
+                            _state["sentence_words"].append(top_vote_word)
+                            sentence_words = _state["sentence_words"]
+                            print(f"  + {top_vote_word}")
                 cooldown_t = now + WORD_COOLDOWN
                 vote_window.clear()
                 low_conf_s = 0
@@ -601,10 +648,23 @@ def _camera_loop(camera_index=0):
         with _lock:
             sw = _state["sentence_words"][:]
             cs = _state["completed_sentence"]
+            is_demo = _state.get("sentence_demo_mode", False)
+            demo_s = _state.get("sentence_demo_sentence", "")
+            demo_trig = _state.get("sentence_demo_trigger", "")
         lang_label = f"Lang: {LANGUAGES.get(lang_code, 'English')}  [1=En 2=Hi 3=Bn 4=Ta 5=Te 6=Mr 7=Gu]"
         building = " ".join(sw)
 
-        if cs and not sw:
+        if is_demo:
+            if demo_s:
+                disp = f'Demo: "{demo_s}"'
+                if len(disp) > 42:
+                    disp = disp[:39] + '...'
+                cv2.putText(frame, disp, (12, h - 48),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.65, C_GREEN, 2)
+            else:
+                cv2.putText(frame, "Sentence Demo Mode · Perform mapped sign ...", (12, h - 48),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.55, C_YELLOW, 1)
+        elif cs and not sw:
             cv2.putText(frame, cs, (12, h - 48),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, C_GREEN, 2)
         elif building:
@@ -721,7 +781,7 @@ def _model_artifact_references(scope: str, entry: VocabularyEntry) -> list[dict]
     return references
 
 
-def _draft_payload(scope: str) -> list[dict]:
+def _draft_payload(scope: str, include_model_references=True) -> list[dict]:
     entries = VOCABULARY_STORE.list_entries(scope)
     sessions = VOCABULARY_STORE.list_sessions(scope)
     samples = VOCABULARY_STORE.list_samples(scope)
@@ -765,7 +825,9 @@ def _draft_payload(scope: str) -> list[dict]:
                 >= MIN_EVALUATION_SESSIONS_PER_CLASS
             ),
             "preprocessing_version": entry.preprocessing_version,
-            "model_references": _model_artifact_references(scope, entry),
+            **({
+                "model_references": _model_artifact_references(scope, entry)
+            } if include_model_references else {}),
         }
         for entry in entries
     ]
@@ -783,13 +845,20 @@ def _vocabulary_version(scope: str) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _storage_version(scope: str) -> str:
+def _storage_version(scope: str, integrated=False) -> str:
     digest = hashlib.sha256()
     scope_root = VOCABULARY_STORE.root / scope
     for name in ("vocabulary.json", "sessions.json", "samples.json"):
         path = scope_root / name
         digest.update(name.encode("utf-8"))
         digest.update(path.read_bytes() if path.is_file() else b"<missing>")
+    if integrated:
+        for path in (
+            BUILTIN_VOCABULARY_STORE.sessions_path,
+            BUILTIN_VOCABULARY_STORE.samples_path,
+        ):
+            digest.update(str(path.name).encode())
+            digest.update(path.read_bytes() if path.is_file() else b"<missing>")
     return digest.hexdigest()
 
 
@@ -806,6 +875,66 @@ def _model_label_map_matches(label_map, entries, scope: str) -> bool:
         and bool(label_map)
         and label_map == _expected_label_map(entries, scope)
     )
+
+
+def _integrated_training_data(scope: str) -> dict:
+    return build_integrated_training_data(
+        VOCABULARY_STORE,
+        BUILTIN_VOCABULARY_STORE,
+        scope,
+        _base_label_names() if scope == "shared" else [],
+    )
+
+
+def _artifact_data_and_map(scope: str, metadata: dict) -> tuple[list, str, list[dict]]:
+    """Load the exact dataset and label map for a candidate's recorded mode."""
+    training_data = metadata.get("training", {}).get("data", {})
+    if training_data.get("dataset_mode") == "built-in-and-draft":
+        current = _integrated_training_data(scope)
+        return (
+            current["examples"],
+            dataset_fingerprint(current["examples"]),
+            current["label_map"],
+        )
+    examples = VOCABULARY_STORE.load_training_examples(scope)
+    entries = sorted(VOCABULARY_STORE.list_entries(scope), key=lambda item: item.label_id)
+    return examples, dataset_fingerprint(examples), _expected_label_map(entries, scope)
+
+
+def _artifact_label_map_matches(label_map, expected_map) -> bool:
+    return (
+        isinstance(label_map, list)
+        and bool(label_map)
+        and label_map == expected_map
+    )
+
+
+def _model_supports_for_label_map(label_map, entries, scope: str) -> list[dict]:
+    entry_by_key = {canonical_label_key(entry.label): entry for entry in entries}
+    builtin_ids = {
+        index: label for index, label in enumerate(
+            sorted(_base_label_names()) if scope == "shared" else []
+        )
+    }
+    supports = []
+    for item in label_map:
+        key = canonical_label_key(item["label"])
+        entry = entry_by_key.get(key)
+        source = item.get("source", "draft")
+        if entry is not None and "draft" in source:
+            entry_id = entry.entry_id
+        elif "built-in" in source or item.get("label_id") in builtin_ids:
+            entry_id = f"builtin:{item['label_id']}"
+        elif entry is not None:
+            entry_id = entry.entry_id
+        else:
+            entry_id = f"label:{item['label_id']}"
+        supports.append({
+            "entry_id": entry_id,
+            "label_id": item["label_id"],
+            "label": item["label"],
+        })
+    return supports
 
 
 def _evaluation_matches_label_map(evaluation: dict, label_map: list[dict]) -> bool:
@@ -854,8 +983,19 @@ def _evaluation_matches_label_map(evaluation: dict, label_map: list[dict]) -> bo
     )
 
 
-def _experimental_status(scope: str) -> dict:
+def _experimental_status(scope: str, include_candidates=True) -> dict:
+    status_timings = {}
+    active_started = time.perf_counter()
     live_entries = VOCABULARY_STORE.list_entries(scope)
+    current_dataset_cache = {}
+
+    def current_for_artifact(metadata):
+        mode = metadata.get("training", {}).get("data", {}).get("dataset_mode")
+        cache_key = "built-in-and-draft" if mode == "built-in-and-draft" else "draft-only"
+        if cache_key not in current_dataset_cache:
+            current_dataset_cache[cache_key] = _artifact_data_and_map(scope, metadata)
+        return current_dataset_cache[cache_key]
+
     live_map = {
         (entry.label_id, entry.label): entry.entry_id
         for entry in live_entries
@@ -882,20 +1022,13 @@ def _experimental_status(scope: str) -> dict:
         classifier = load_artifact(VOCABULARY_STORE, scope)
         metadata = classifier.metadata
         model_map = metadata.get("label_map", [])
-        compatible = _model_label_map_matches(model_map, live_entries, scope)
-        supports = [
-            {
-                "entry_id": live_map[(item["label_id"], item["label"])],
-                "label_id": item["label_id"],
-                "label": item["label"],
-            }
-            for item in model_map
-        ] if compatible else []
+        current_examples, current_data_version, expected_map = current_for_artifact(metadata)
+        compatible = _artifact_label_map_matches(model_map, expected_map)
+        supports = _model_supports_for_label_map(
+            model_map, live_entries, scope
+        ) if compatible else []
         evaluation = metadata.get("evaluation", {})
         evaluation_valid = _evaluation_matches_label_map(evaluation, model_map)
-        current_data_version = dataset_fingerprint(
-            VOCABULARY_STORE.load_training_examples(scope)
-        )
         trained_data_version = metadata.get("training", {}).get(
             "data", {}
         ).get("fingerprint")
@@ -924,7 +1057,7 @@ def _experimental_status(scope: str) -> dict:
                 None if compatible and trained_data_version == current_data_version
                 and evaluation_valid
                 else (
-                    "Model labels do not exactly match the current saved vocabulary."
+                    "Model labels do not exactly match the current eligible vocabulary mapping."
                     if not compatible else
                     "Saved recordings changed after this model was trained."
                     if trained_data_version != current_data_version else
@@ -934,63 +1067,73 @@ def _experimental_status(scope: str) -> dict:
         })
     except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
         active["error"] = str(error)
+    status_timings["active_model_validation_ms"] = (
+        time.perf_counter() - active_started
+    ) * 1000
 
     candidates = []
-    try:
-        artifacts = list_artifacts(VOCABULARY_STORE, scope)
-    except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        artifacts = []
-        candidate_list_error = str(error)
-    else:
-        candidate_list_error = None
-    for artifact in artifacts:
+    candidate_list_error = None
+    candidate_started = time.perf_counter()
+    if include_candidates:
         try:
-            candidate = load_artifact(
-                VOCABULARY_STORE, scope, artifact["artifact_id"]
-            )
-            evaluation = candidate.metadata.get("evaluation", {})
-            if current_data_version is None:
-                current_data_version = dataset_fingerprint(
-                    VOCABULARY_STORE.load_training_examples(scope)
+            artifacts = list_artifacts(VOCABULARY_STORE, scope)
+        except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            artifacts = []
+            candidate_list_error = str(error)
+        for artifact in artifacts:
+            try:
+                candidate = load_artifact(
+                    VOCABULARY_STORE, scope, artifact["artifact_id"]
                 )
-            candidate_fingerprint = candidate.metadata.get("training", {}) \
-                .get("data", {}).get("fingerprint")
-            vocabulary_matches = _model_label_map_matches(
-                candidate.label_map, live_entries, scope
-            )
-            candidates.append({
-                "artifact_id": artifact["artifact_id"],
-                "created_at": artifact["created_at"],
-                "evaluation_ready": bool(evaluation.get("evaluation_ready")),
-                "validation": evaluation.get("validation"),
-                "active": artifact["artifact_id"] == active["artifact_id"],
-                "data_current": bool(candidate_fingerprint)
-                    and candidate_fingerprint == current_data_version,
-                "vocabulary_matches": vocabulary_matches,
-                "coverage_complete": vocabulary_matches,
-                "label_map": candidate.label_map,
-                "supported_label_count": len(candidate.label_map),
-                "preprocessing_compatible": (
-                    candidate.metadata.get("preprocessing_version")
-                    == PREPROCESSING_VERSION
-                    and candidate.metadata.get("sequence_shape")
-                    == list(SEQUENCE_SHAPE)
-                ),
-                "evaluation_valid": _evaluation_matches_label_map(
-                    evaluation, candidate.label_map
-                ),
-            })
-        except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError):
-            candidates.append({
-                "artifact_id": artifact.get("artifact_id"),
-                "created_at": artifact.get("created_at"),
-                "evaluation_ready": False,
-                "validation": None,
-                "active": False,
-                "data_current": False,
-                "vocabulary_matches": False,
-                "invalid": True,
-            })
+                evaluation = candidate.metadata.get("evaluation", {})
+                candidate_fingerprint = candidate.metadata.get("training", {}) \
+                    .get("data", {}).get("fingerprint")
+                _, candidate_current_fingerprint, candidate_expected_map = current_for_artifact(
+                    candidate.metadata
+                )
+                if current_data_version is None:
+                    current_data_version = candidate_current_fingerprint
+                vocabulary_matches = _artifact_label_map_matches(
+                    candidate.label_map, candidate_expected_map
+                )
+                candidates.append({
+                    "artifact_id": artifact["artifact_id"],
+                    "created_at": artifact["created_at"],
+                    "evaluation_ready": bool(evaluation.get("evaluation_ready")),
+                    "validation": evaluation.get("validation"),
+                    "active": artifact["artifact_id"] == active["artifact_id"],
+                    "data_current": bool(candidate_fingerprint)
+                        and candidate_fingerprint == candidate_current_fingerprint,
+                    "vocabulary_matches": vocabulary_matches,
+                    "coverage_complete": vocabulary_matches,
+                    "label_map": candidate.label_map,
+                    "supported_label_count": len(candidate.label_map),
+                    "excluded_labels": candidate.metadata.get("training", {})
+                        .get("data", {}).get("excluded_labels", []),
+                    "preprocessing_compatible": (
+                        candidate.metadata.get("preprocessing_version")
+                        == PREPROCESSING_VERSION
+                        and candidate.metadata.get("sequence_shape")
+                        == list(SEQUENCE_SHAPE)
+                    ),
+                    "evaluation_valid": _evaluation_matches_label_map(
+                        evaluation, candidate.label_map
+                    ),
+                })
+            except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError):
+                candidates.append({
+                    "artifact_id": artifact.get("artifact_id"),
+                    "created_at": artifact.get("created_at"),
+                    "evaluation_ready": False,
+                    "validation": None,
+                    "active": False,
+                    "data_current": False,
+                    "vocabulary_matches": False,
+                    "invalid": True,
+                })
+    status_timings["candidate_validation_ms"] = (
+        time.perf_counter() - candidate_started
+    ) * 1000
     return {
         "scope": scope,
         "preprocessing_version": PREPROCESSING_VERSION,
@@ -998,10 +1141,90 @@ def _experimental_status(scope: str) -> dict:
         "active_model": active,
         "candidates": candidates,
         "candidate_list_error": candidate_list_error,
+        "timings": status_timings,
     }
 
 
-def _sequence_from_frame_data_urls(frames):
+def _get_active_model_labels() -> list[str]:
+    try:
+        status = _experimental_status("shared")
+        if status.get("active_model", {}).get("usable"):
+            supports = status["active_model"].get("supports", [])
+            labels = [item["label"] for item in supports if isinstance(item, dict) and "label" in item]
+            if labels:
+                return sorted(labels)
+    except Exception as error:
+        print(f"  [Sentence Demo] Warning: could not inspect active sequence model labels: {error}")
+    if _labels:
+        return list(_labels)
+    return []
+
+
+SENTENCE_DEMO_MANAGER = SentenceDemoManager(
+    config_path=SENTENCE_DEMO_CONFIG,
+    supported_labels_provider=_get_active_model_labels
+)
+
+
+def _sequence_from_decoded_frames(decoded_frames, include_timing=False):
+    global _predict_holistic
+    timings = {}
+    if _predict_holistic is None:
+        initialization_started = time.perf_counter()
+        _predict_holistic = _build_holistic()
+        timings["holistic_initialization_ms"] = (
+            time.perf_counter() - initialization_started
+        ) * 1000
+    else:
+        timings["holistic_initialization_ms"] = 0.0
+    extraction_started = time.perf_counter()
+    features = []
+    for image in decoded_frames:
+        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        features.append(extract_frame_features(_predict_holistic.detect(mp_image)))
+    timings["landmark_extraction_ms"] = (
+        time.perf_counter() - extraction_started
+    ) * 1000
+    sequence = np.asarray(features, dtype=np.float32)
+    quality_started = time.perf_counter()
+    try:
+        validated_sequence, quality = validate_capture_sequence(
+            sequence, PREPROCESSING_VERSION
+        )
+    except ValueError as error:
+        hand_quality_rejected = str(error).startswith(
+            "Hands must be detected in at least "
+        )
+        hand_frames = None
+        if hand_quality_rejected:
+            left_hand = sequence[:, LEFT_HAND_START:RIGHT_HAND_START]
+            right_hand = sequence[:, RIGHT_HAND_START:]
+            hand_visible = np.any(left_hand != 0, axis=1) | np.any(
+                right_hand != 0, axis=1
+            )
+            hand_frames = int(np.count_nonzero(hand_visible))
+        timings.update({
+            "quality_validation_ms": (
+                time.perf_counter() - quality_started
+            ) * 1000,
+            "hand_frames": hand_frames,
+            "hand_quality_rejected": hand_quality_rejected,
+        })
+        error.processing_timing = timings
+        raise
+    timings.update({
+        "quality_validation_ms": (time.perf_counter() - quality_started) * 1000,
+        "hand_frames": getattr(quality, "hand_frames", None),
+        "hand_quality_rejected": False,
+    })
+    if include_timing:
+        return validated_sequence, quality, timings
+    return validated_sequence, quality
+
+
+def _sequence_from_frame_data_urls(frames, include_timing=False):
+    decode_started = time.perf_counter()
     decoded_frames = []
     for index, frame_data in enumerate(frames):
         if not isinstance(frame_data, str) or not frame_data.startswith(
@@ -1019,17 +1242,21 @@ def _sequence_from_frame_data_urls(frames):
             raise ValueError(f"Frame {index + 1} is not a decodable image.")
         decoded_frames.append(image)
 
-    holistic = _build_holistic()
+    decode_ms = (time.perf_counter() - decode_started) * 1000
     try:
-        features = []
-        for image in decoded_frames:
-            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-            features.append(extract_frame_features(holistic.detect(mp_image)))
-    finally:
-        holistic.close()
-    sequence = np.asarray(features, dtype=np.float32)
-    return validate_capture_sequence(sequence, PREPROCESSING_VERSION)
+        result = _predict_executor.submit(
+            _sequence_from_decoded_frames, decoded_frames, include_timing
+        ).result()
+    except ValueError as error:
+        timings = getattr(error, "processing_timing", {})
+        timings["frame_decode_ms"] = decode_ms
+        error.processing_timing = timings
+        raise
+    if include_timing:
+        sequence, quality, timings = result
+        timings["frame_decode_ms"] = decode_ms
+        return sequence, quality, timings
+    return result
 
 
 @app.route("/developer")
@@ -1052,19 +1279,266 @@ def list_developer_drafts():
     return jsonify({"drafts": _draft_payload(scope)})
 
 
+def _draft_sentence_mapping_status(scope: str, entry: VocabularyEntry) -> dict:
+    SENTENCE_DEMO_MANAGER.load_mappings(force=True)
+    mapping = SENTENCE_DEMO_MANAGER.lookup_sentence(entry.label)
+    active_model = _experimental_status(scope, include_candidates=False).get(
+        "active_model", {}
+    )
+    active_supports_label = bool(active_model.get("usable")) and any(
+        isinstance(item, dict) and item.get("entry_id") == entry.entry_id
+        for item in active_model.get("supports", [])
+    )
+    if mapping and active_supports_label:
+        state = "available"
+        message = "Mapping saved and available to the active translator."
+    elif mapping:
+        state = "pending_activation"
+        message = (
+            "Mapping saved. Waiting for model training, evaluation, and activation; "
+            "this sign is not currently recognizable by the active model."
+        )
+    else:
+        state = "not_saved"
+        message = "No sentence mapping is saved for this sign yet."
+    return {
+        "entry_id": entry.entry_id,
+        "label": entry.label,
+        "scope": scope,
+        "mapping": (
+            {"sign": mapping["matched_sign"], "sentence": mapping["sentence"]}
+            if mapping else None
+        ),
+        "mapping_saved": mapping is not None,
+        "recognizable_by_active_model": active_supports_label,
+        "state": state,
+        "message": message,
+    }
+
+
+@app.route(
+    "/developer/api/drafts/<entry_id>/sentence-mapping",
+    methods=["GET", "PUT"],
+)
+def developer_draft_sentence_mapping(entry_id):
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+    try:
+        validate_entry_id(entry_id)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 422
+
+    data = request.get_json(silent=True) if request.method == "PUT" else None
+    scope = data.get("scope") if data is not None else request.args.get("scope")
+    if not isinstance(scope, str) or scope not in {"shared", "personal"}:
+        return jsonify({"error": "scope must be shared or personal"}), 400
+
+    entry = next(
+        (item for item in VOCABULARY_STORE.list_entries(scope)
+         if item.entry_id == entry_id),
+        None,
+    )
+    if entry is None:
+        return jsonify({"error": "Vocabulary label does not exist in the requested scope."}), 404
+
+    if request.method == "PUT":
+        if not isinstance(data, dict):
+            return jsonify({"error": "A JSON object is required."}), 400
+        sentence = data.get("sentence")
+        if not isinstance(sentence, str) or not sentence.strip():
+            return jsonify({"error": "Enter a non-empty predefined sentence."}), 400
+        if len(sentence.strip()) > 1000:
+            return jsonify({"error": "Predefined sentence must be 1000 characters or fewer."}), 400
+        ok, error = SENTENCE_DEMO_MANAGER.save_mapping(entry.label, sentence)
+        if not ok:
+            status_code = 500 if error and error.startswith("Could not write") else 400
+            return jsonify({"error": error}), status_code
+
+    return jsonify(_draft_sentence_mapping_status(scope, entry))
+
+
+@app.route("/developer/api/builtin-sentence-mapping", methods=["GET", "PUT"])
+def developer_builtin_sentence_mapping():
+    """Read or update a sentence for an existing built-in vocabulary label."""
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+
+    data = request.get_json(silent=True) if request.method == "PUT" else None
+    if request.method == "PUT" and not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required."}), 400
+    requested_label = (
+        data.get("label") if data is not None else request.args.get("label")
+    )
+    builtin_labels = _base_label_names()
+    if requested_label is None:
+        if request.method == "GET":
+            return jsonify({"labels": builtin_labels})
+        return jsonify({"error": "Select a built-in vocabulary label."}), 400
+    if not isinstance(requested_label, str) or not requested_label.strip():
+        return jsonify({"error": "Select a valid built-in vocabulary label."}), 400
+    label = next(
+        (item for item in builtin_labels
+         if item.casefold() == requested_label.strip().casefold()),
+        None,
+    )
+    if label is None:
+        return jsonify({"error": "That label is not in the built-in vocabulary."}), 404
+
+    if request.method == "PUT":
+        sentence = data.get("sentence")
+        if not isinstance(sentence, str) or not sentence.strip():
+            return jsonify({"error": "Enter a non-empty predefined sentence."}), 400
+        if len(sentence.strip()) > 1000:
+            return jsonify({"error": "Predefined sentence must be 1000 characters or fewer."}), 400
+        ok, error = SENTENCE_DEMO_MANAGER.save_mapping(label, sentence)
+        if not ok:
+            status_code = 500 if error and error.startswith("Could not write") else 400
+            return jsonify({"error": error}), status_code
+
+    SENTENCE_DEMO_MANAGER.load_mappings(force=True)
+    mapping = SENTENCE_DEMO_MANAGER.lookup_sentence(label)
+    return jsonify({
+        "label": label,
+        "mapping": (
+            {"sign": mapping["matched_sign"], "sentence": mapping["sentence"]}
+            if mapping else None
+        ),
+        "mapping_saved": mapping is not None,
+        "state": "saved" if mapping else "not_saved",
+        "message": (
+            "Mapping saved for this built-in label; the recognition vocabulary is unchanged."
+            if request.method == "PUT" else
+            "Existing mapping loaded. Saving a sentence will not create a vocabulary entry."
+            if mapping else
+            "No sentence mapping is saved for this built-in label yet."
+        ),
+    })
+
+
+@app.route("/developer/api/builtin-training-data", methods=["GET", "DELETE"])
+def list_builtin_training_data():
+    """List built-in classes and counts in the isolated 30x378 capture store."""
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+    if request.method == "DELETE":
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"error": "A JSON object is required."}), 400
+        if data.get("confirmed") is not True:
+            return jsonify({"error": "Explicit deletion confirmation is required."}), 400
+        try:
+            result = BUILTIN_VOCABULARY_STORE.delete_label_samples(data.get("label"))
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 422
+        except OSError as error:
+            return jsonify({"error": str(error)}), 500
+        return jsonify({"deleted": True, **result}), 200
+    try:
+        labels = BUILTIN_VOCABULARY_STORE.label_summary()
+    except (OSError, ValueError, TypeError) as error:
+        return jsonify({"error": str(error)}), 500
+    return jsonify({
+        "labels": labels,
+        "preprocessing_version": PREPROCESSING_VERSION,
+        "sample_shape": list(SEQUENCE_SHAPE),
+        "training_integrated": True,
+    })
+
+
+@app.route("/developer/api/builtin-training-data/sessions", methods=["POST"])
+def create_builtin_capture_session():
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required."}), 400
+    try:
+        session = BUILTIN_VOCABULARY_STORE.create_session(data.get("label"))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 422
+    except OSError as error:
+        return jsonify({"error": str(error)}), 500
+    return jsonify({
+        "session_id": session.session_id,
+        "label": session.label,
+        "created_at": session.created_at,
+        "preprocessing_version": session.preprocessing_version,
+    }), 201
+
+
+@app.route(
+    "/developer/api/builtin-training-data/sessions/<session_id>/samples",
+    methods=["POST"],
+)
+def save_builtin_capture_sample(session_id):
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "A JSON object is required."}), 400
+    try:
+        sequence, quality = validate_capture_sequence(
+            data.get("sequence"), data.get("preprocessing_version")
+        )
+        sample = BUILTIN_VOCABULARY_STORE.save_sample(
+            session_id=session_id,
+            sequence=sequence,
+            preprocessing_version=data.get("preprocessing_version"),
+        )
+        label_summary = next(
+            item for item in BUILTIN_VOCABULARY_STORE.label_summary()
+            if item["label"] == sample.label
+        )
+    except (TypeError, ValueError) as error:
+        return jsonify({"error": str(error)}), 422
+    except OSError as error:
+        return jsonify({"error": str(error)}), 500
+    return jsonify({
+        "sample_id": sample.sample_id,
+        "label": sample.label,
+        "sample_count": label_summary["sample_count"],
+        "session_count": label_summary["session_count"],
+        "sha256": sample.sha256,
+        "shape": list(sample.shape),
+        "preprocessing_version": sample.preprocessing_version,
+        "quality": {
+            "frames": quality.frames,
+            "hand_frames": quality.hand_frames,
+            "hand_frame_ratio": quality.hand_frame_ratio,
+        },
+    }), 201
+
+
 @app.route("/api/vocabulary", methods=["GET"])
 def list_public_vocabulary():
+    status_started = time.perf_counter()
     forbidden = _developer_forbidden_response()
     if forbidden:
         return forbidden
     scope = request.args.get("scope", "shared")
     if scope not in {"shared", "personal"}:
         return jsonify({"error": "scope must be shared or personal"}), 400
-    drafts = _draft_payload(scope)
+    include_candidates = request.args.get("include_candidates", "true").lower() not in {
+        "0", "false", "no"
+    }
+    drafts = _draft_payload(
+        scope, include_model_references=include_candidates
+    )
     supported = set()
-    status = _experimental_status(scope)
-    if status["active_model"]["usable"]:
-        supported = {item["entry_id"] for item in status["active_model"]["supports"]}
+    status = (
+        _experimental_status(scope, include_candidates=False)
+        if not include_candidates
+        else _experimental_status(scope)
+    )
+    active_model = status.get("active_model", {})
+    supports = active_model.get("supports", [])
+    if active_model.get("usable"):
+        supported = {item["entry_id"] for item in supports}
     words = [
         {
             **draft,
@@ -1088,22 +1562,24 @@ def list_public_vocabulary():
             "experimental": {
                 "id": "experimental",
                 "label": "Active sequence classifier",
-                "available": bool(status["active_model"]["usable"]),
-                "active_artifact_id": status["active_model"]["artifact_id"],
-                "active_model": status["active_model"],
-                "vocabulary": [
-                    item["label"] for item in status["active_model"]["supports"]
-                ],
-                "supported_label_count": len(status["active_model"]["supports"]),
+                "available": bool(active_model.get("usable")),
+                "active_artifact_id": active_model.get("artifact_id"),
+                "active_model": active_model,
+                "vocabulary": [item["label"] for item in supports],
+                "supported_label_count": len(supports),
                 "saved_vocabulary_count": len(words),
                 "full_vocabulary_supported": (
-                    bool(status["active_model"]["usable"])
-                    and len(status["active_model"]["supports"]) == len(words)
+                    bool(active_model.get("usable"))
+                    and len(supports) == len(words)
                 ),
-                "unavailable_reason": status["active_model"].get("unusable_reason"),
+                "unavailable_reason": active_model.get("unusable_reason"),
             },
         },
         **status,
+        "timings": {
+            **status.get("timings", {}),
+            "status_build_ms": (time.perf_counter() - status_started) * 1000,
+        },
     })
 
 
@@ -1116,25 +1592,79 @@ def train_experimental_candidate():
     if not isinstance(data, dict) or data.get("scope") not in {"shared", "personal"}:
         return jsonify({"error": "scope must be shared or personal"}), 400
     scope = data["scope"]
-    drafts = _draft_payload(scope)
-    if len(drafts) < 2:
-        return jsonify({"error": "At least two vocabulary words are required."}), 422
-    unready = [
-        {"label": item["label"], "recorded_sessions": item["session_count"]}
-        for item in drafts if not item["training_ready"]
-    ]
-    if unready:
-        return jsonify({
-            "error": "Every word needs at least "
-                     f"{MIN_TRAIN_SESSIONS_PER_CLASS} recorded sessions before training.",
-            "unready_words": unready,
-        }), 422
+    target_label = data.get("target_label")
+    integrated = target_label is not None
     try:
-        examples = VOCABULARY_STORE.load_training_examples(scope)
+        if integrated:
+            if scope != "shared" or not isinstance(target_label, str):
+                return jsonify({"error": "Built-in vocabulary training requires a shared-scope label."}), 400
+            target = BUILTIN_VOCABULARY_STORE.canonical_label(target_label)
+            integrated_data = _integrated_training_data(scope)
+            target_summary = next(
+                item for item in BUILTIN_VOCABULARY_STORE.label_summary()
+                if item["label"] == target
+            )
+            if target_summary["session_count"] < MIN_EVALUATION_SESSIONS_PER_CLASS:
+                return jsonify({
+                    "error": (
+                        f"{target} needs {MIN_EVALUATION_SESSIONS_PER_CLASS} independent "
+                        "saved recording sessions before training."
+                    ),
+                    "label": target,
+                    "session_count": target_summary["session_count"],
+                    "required_sessions": MIN_EVALUATION_SESSIONS_PER_CLASS,
+                }), 422
+            examples = integrated_data["examples"]
+            label_map = integrated_data["label_map"]
+            if target.casefold() not in {item["label"].casefold() for item in label_map}:
+                raise InsufficientDataError(
+                    f"{target} did not have enough valid sequences to enter the training dataset."
+                )
+            if len(label_map) < 2:
+                raise InsufficientDataError(
+                    "At least two eligible classes are required; no one-class candidate was created."
+                )
+            dataset_details = integrated_data
+        else:
+            drafts = _draft_payload(scope)
+            if len(drafts) < 2:
+                return jsonify({"error": "At least two vocabulary words are required."}), 422
+            unready = [
+                {"label": item["label"], "recorded_sessions": item["session_count"]}
+                for item in drafts if not item["training_ready"]
+            ]
+            if unready:
+                return jsonify({
+                    "error": "Every word needs at least "
+                             f"{MIN_TRAIN_SESSIONS_PER_CLASS} recorded sessions before training.",
+                    "unready_words": unready,
+                }), 422
+            examples = VOCABULARY_STORE.load_training_examples(scope)
+            label_map = None
+            dataset_details = None
         split = split_by_session(examples)
         if not split.train_indices:
             raise InsufficientDataError("No eligible training examples are available.")
-        report = train_and_evaluate(VOCABULARY_STORE, scope, promote=False)
+        fingerprint = dataset_fingerprint(examples)
+        job_key = (scope, fingerprint)
+        with _experimental_training_lock:
+            if job_key in _experimental_training_jobs:
+                return jsonify({
+                    "error": "Training is already running for this exact dataset. Wait for it to finish before retrying."
+                }), 409
+            _experimental_training_jobs.add(job_key)
+        try:
+            report = train_and_evaluate(
+                VOCABULARY_STORE,
+                scope,
+                promote=False,
+                examples=examples,
+                label_map=label_map,
+                dataset_details=dataset_details,
+            )
+        finally:
+            with _experimental_training_lock:
+                _experimental_training_jobs.discard(job_key)
     except (InsufficientDataError, ArtifactCompatibilityError, ValueError, OSError) as error:
         return jsonify({"error": str(error)}), 422
     return jsonify({
@@ -1145,10 +1675,13 @@ def train_experimental_candidate():
             "validation": report["validation"],
             "insufficiencies": report["insufficiencies"],
             "data": report["data"],
+            "label_map": report["label_map"],
+            "target_label": target if integrated else None,
         },
         "activated": False,
         "message": (
             "Candidate saved without changing the active model. "
+            "Dataset assembly, training, and session-separated evaluation completed. "
             "Session-separated evaluation is required before activation."
         ),
     }), 201
@@ -1170,9 +1703,10 @@ def activate_experimental_candidate(artifact_id):
             return jsonify({
                 "error": "This candidate has no session-separated validation report and cannot be activated."
             }), 409
-        with VOCABULARY_STORE._lock:
-            current_examples = VOCABULARY_STORE.load_training_examples(scope)
-            current_fingerprint = dataset_fingerprint(current_examples)
+        with VOCABULARY_STORE._lock, BUILTIN_VOCABULARY_STORE._lock:
+            current_examples, current_fingerprint, current_map = _artifact_data_and_map(
+                scope, candidate.metadata
+            )
             candidate_fingerprint = candidate.metadata.get("training", {}).get(
                 "data", {}
             ).get("fingerprint")
@@ -1180,12 +1714,18 @@ def activate_experimental_candidate(artifact_id):
                 return jsonify({
                     "error": "The saved examples changed after this candidate was trained. Train a fresh candidate before activation."
                 }), 409
-            current_entries = VOCABULARY_STORE.list_entries(scope)
-            if not _model_label_map_matches(
-                candidate.label_map, current_entries, scope
+            candidate_sources = candidate.metadata.get("training", {}).get(
+                "data", {}
+            ).get("source_fingerprints")
+            if candidate_sources and candidate_sources != source_dataset_fingerprints(
+                current_examples
             ):
                 return jsonify({
-                    "error": "The candidate label map no longer matches the current vocabulary. Train a fresh candidate."
+                    "error": "The built-in or draft dataset source fingerprint changed after training. Train a fresh candidate before activation."
+                }), 409
+            if not _artifact_label_map_matches(candidate.label_map, current_map):
+                return jsonify({
+                    "error": "The candidate label map no longer matches the current eligible vocabulary. Train a fresh candidate."
                 }), 409
             activate_artifact(VOCABULARY_STORE, scope, artifact_id)
     except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
@@ -1389,6 +1929,7 @@ def process_developer_capture():
 
 @app.route("/api/experimental/predict", methods=["POST"])
 def predict_experimental_sign():
+    request_started = time.perf_counter()
     forbidden = _developer_forbidden_response()
     if forbidden:
         return forbidden
@@ -1417,10 +1958,28 @@ def predict_experimental_sign():
     frames = data.get("frames")
     if not isinstance(frames, list) or len(frames) != MAX_FRAMES:
         return jsonify({"error": f"Exactly {MAX_FRAMES} webcam frames are required."}), 400
+    classifier_load_started = time.perf_counter()
     try:
         classifier = load_artifact(VOCABULARY_STORE, scope, artifact_id)
     except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-        return jsonify({"error": f"No usable active experimental model: {error}"}), 503
+        timings = {
+            "classifier_load_ms": (
+                time.perf_counter() - classifier_load_started
+            ) * 1000,
+            "request_total_ms": (
+                time.perf_counter() - request_started
+            ) * 1000,
+        }
+        return jsonify({
+            "error": f"No usable active experimental model: {error}",
+            "timings": timings,
+        }), 503
+    timings = {
+        "classifier_load_ms": (
+            time.perf_counter() - classifier_load_started
+        ) * 1000,
+    }
+    validation_started = time.perf_counter()
     evaluation = classifier.metadata.get("evaluation", {})
     test_only = artifact_id is not None
     if artifact_id is None:
@@ -1433,23 +1992,21 @@ def predict_experimental_sign():
             return jsonify({"error": "The active model changed while loading. Refresh and retry."}), 409
         supports = status["supports"]
         vocabulary_version = status["vocabulary_version"]
+        current_examples, current_fingerprint, current_map = _artifact_data_and_map(
+            scope, classifier.metadata
+        )
+        if classifier.metadata.get("training", {}).get("data", {}).get("fingerprint") != current_fingerprint:
+            return jsonify({"error": "Active model data changed while it was being validated."}), 409
     else:
         if classifier.metadata.get("scope") != scope:
             return jsonify({
                 "error": "Candidate scope does not match the requested vocabulary."
             }), 409
         try:
-            with VOCABULARY_STORE._lock:
-                current_examples = VOCABULARY_STORE.load_training_examples(scope)
-                current_fingerprint = dataset_fingerprint(current_examples)
-                current_entries = sorted(
-                    VOCABULARY_STORE.list_entries(scope),
-                    key=lambda item: item.label_id,
+            with VOCABULARY_STORE._lock, BUILTIN_VOCABULARY_STORE._lock:
+                current_examples, current_fingerprint, current_map = _artifact_data_and_map(
+                    scope, classifier.metadata
                 )
-                current_map = [
-                    {"label_id": entry.label_id, "label": entry.label, "scope": scope}
-                    for entry in current_entries
-                ]
         except (OSError, ValueError, KeyError, TypeError) as error:
             return jsonify({"error": f"Could not verify candidate data: {error}"}), 422
         candidate_fingerprint = classifier.metadata.get("training", {}).get(
@@ -1459,29 +2016,55 @@ def predict_experimental_sign():
             return jsonify({
                 "error": "Saved examples changed after this candidate was trained. Train a fresh candidate before testing."
             }), 409
-        if not _model_label_map_matches(classifier.label_map, current_entries, scope):
+        if not _artifact_label_map_matches(classifier.label_map, current_map):
             return jsonify({
                 "error": "Candidate labels no longer match the current vocabulary. Train a fresh candidate before testing."
             }), 409
-        supports = [
-            {"label_id": entry.label_id, "entry_id": entry.entry_id}
-            for entry in current_entries
-        ]
+        supports = _model_supports_for_label_map(
+            classifier.label_map, VOCABULARY_STORE.list_entries(scope), scope
+        )
         vocabulary_version = _vocabulary_version(scope)
     request_vocabulary_version = _vocabulary_version(scope)
-    request_storage_version = _storage_version(scope)
+    integrated_mode = classifier.metadata.get("training", {}).get("data", {}).get(
+        "dataset_mode"
+    ) == "built-in-and-draft"
+    request_storage_version = _storage_version(scope, integrated=integrated_mode)
     vocabulary_version = request_vocabulary_version
-    if not _model_label_map_matches(
-        classifier.label_map,
-        VOCABULARY_STORE.list_entries(scope),
-        scope,
-    ):
+    if not _artifact_label_map_matches(classifier.label_map, current_map):
         return jsonify({"error": "Model labels do not match the current vocabulary."}), 409
+    timings["model_validation_ms"] = (
+        time.perf_counter() - validation_started
+    ) * 1000
     try:
-        sequence, quality = _sequence_from_frame_data_urls(frames)
+        processed = _sequence_from_frame_data_urls(frames, include_timing=True)
+    except (TypeError, ValueError, OSError) as error:
+        timings.update(getattr(error, "processing_timing", {}))
+        timings["request_total_ms"] = (
+            time.perf_counter() - request_started
+        ) * 1000
+        return jsonify({"error": str(error), "timings": timings}), 422
+    if len(processed) == 3:
+        sequence, quality, processing_timings = processed
+        timings.update(processing_timings)
+    else:
+        sequence, quality = processed
+    inference_started = time.perf_counter()
+    try:
         prediction = classifier.predict(sequence)
     except (TypeError, ValueError, OSError) as error:
-        return jsonify({"error": str(error)}), 422
+        timings["model_inference_ms"] = (
+            time.perf_counter() - inference_started
+        ) * 1000
+        timings["request_total_ms"] = (
+            time.perf_counter() - request_started
+        ) * 1000
+        return jsonify({"error": str(error), "timings": timings}), 422
+    timings["model_inference_ms"] = (
+        time.perf_counter() - inference_started
+    ) * 1000
+    timings["request_total_ms"] = (
+        time.perf_counter() - request_started
+    ) * 1000
     if not isinstance(prediction, dict):
         return jsonify({"error": "The classifier returned an invalid prediction."}), 502
     label_id = prediction.get("label_id")
@@ -1518,7 +2101,7 @@ def predict_experimental_sign():
             return jsonify({"error": "The classifier predicted a label outside the supported vocabulary."}), 502
     if (
         request_vocabulary_version != _vocabulary_version(scope)
-        or request_storage_version != _storage_version(scope)
+        or request_storage_version != _storage_version(scope, integrated=integrated_mode)
     ):
         return jsonify({"error": "Saved vocabulary or examples changed during prediction. Refresh and retry."}), 409
     prediction.update({
@@ -1539,6 +2122,7 @@ def predict_experimental_sign():
             "hand_frames": quality.hand_frames,
             "preprocessing_version": PREPROCESSING_VERSION,
         },
+        "timings": timings,
     })
     return jsonify(prediction)
 
@@ -1584,8 +2168,9 @@ def build_ai_sentence():
                     "error": "The active model is unavailable or changed. Refresh and collect the sequence again."
                 }), 409
             classifier = load_artifact(VOCABULARY_STORE, scope, artifact_id)
-            current_examples = VOCABULARY_STORE.load_training_examples(scope)
-            current_fingerprint = dataset_fingerprint(current_examples)
+            current_examples, current_fingerprint, current_map = _artifact_data_and_map(
+                scope, classifier.metadata
+            )
             entries = VOCABULARY_STORE.list_entries(scope)
         except (ArtifactCompatibilityError, OSError, ValueError, KeyError, TypeError) as error:
             return jsonify({"error": f"Could not verify the active model: {error}"}), 409
@@ -1593,7 +2178,7 @@ def build_ai_sentence():
             return jsonify({"error": "Active model scope does not match the request."}), 409
         if (classifier.metadata.get("training", {}).get("data", {}).get("fingerprint")
                 != current_fingerprint
-                or not _model_label_map_matches(classifier.label_map, entries, scope)
+                or not _artifact_label_map_matches(classifier.label_map, current_map)
                 or not _evaluation_matches_label_map(
                     classifier.metadata.get("evaluation", {}), classifier.label_map
                 )):
@@ -1702,6 +2287,219 @@ def list_developer_samples(entry_id):
     return jsonify({"samples": summaries})
 
 
+@app.route("/developer/api/dataset/export", methods=["GET"])
+def export_developer_dataset():
+    forbidden = _developer_forbidden_response()
+    if forbidden:
+        return forbidden
+    scope = request.args.get("scope", "")
+    if scope not in {"shared", "personal"}:
+        return jsonify({"error": "scope must be shared or personal"}), 400
+
+    try:
+        with VOCABULARY_STORE._lock:
+            entries = sorted(
+                VOCABULARY_STORE.list_entries(scope),
+                key=lambda item: item.label_id,
+            )
+            entries_by_id = {item.entry_id: item for item in entries}
+            samples = {
+                item.sample_id: item
+                for item in VOCABULARY_STORE.list_samples(scope)
+            }
+            sessions = {
+                item.session_id: item
+                for item in VOCABULARY_STORE.list_sessions(scope)
+            }
+            examples = sorted(
+                VOCABULARY_STORE.load_training_examples(scope),
+                key=lambda item: (
+                    item.label_id, item.session_id, item.sample_id
+                ),
+            )
+            if not examples:
+                return jsonify({
+                    "error": f"No saved {scope} examples are available to export."
+                }), 422
+
+            split = split_by_session(examples, seed=42)
+            sessions_by_label = {
+                entry.label_id: {
+                    item.session_id for item in examples
+                    if item.label_id == entry.label_id
+                }
+                for entry in entries
+            }
+            missing_labels = [
+                entry.label for entry in entries
+                if not sessions_by_label[entry.label_id]
+            ]
+            evaluation_ready = (
+                len(entries) >= 2
+                and split.evaluation_ready
+                and not missing_labels
+            )
+            training_ready = (
+                len(entries) >= 2
+                and not missing_labels
+                and all(
+                    len(sessions_by_label[entry.label_id])
+                    >= MIN_TRAIN_SESSIONS_PER_CLASS
+                    for entry in entries
+                )
+            )
+
+            label_manifest = {
+                "schema_version": 1,
+                "scope": scope,
+                "preprocessing_version": PREPROCESSING_VERSION,
+                "ordering": "ascending_label_id",
+                "labels": [
+                    {
+                        "class_index": index,
+                        "label_id": entry.label_id,
+                        "entry_id": entry.entry_id,
+                        "label": entry.label,
+                    }
+                    for index, entry in enumerate(entries)
+                ],
+            }
+            used_sessions = sorted({
+                example.session_id for example in examples
+            })
+            session_manifest = [
+                {
+                    "session_id": session_id,
+                    "entry_id": sessions[session_id].entry_id,
+                    "label_id": entries_by_id[
+                        sessions[session_id].entry_id
+                    ].label_id,
+                    "label": entries_by_id[
+                        sessions[session_id].entry_id
+                    ].label,
+                    "scope": scope,
+                    "created_at": sessions[session_id].created_at,
+                    "preprocessing_version": (
+                        sessions[session_id].preprocessing_version
+                    ),
+                }
+                for session_id in used_sessions
+            ]
+
+            split_assignments = {}
+            if evaluation_ready:
+                train_ids = {
+                    examples[index].sample_id for index in split.train_indices
+                }
+                validation_ids = {
+                    examples[index].sample_id
+                    for index in split.validation_indices
+                }
+                split_assignments = {
+                    sample_id: (
+                        "train" if sample_id in train_ids else "validation"
+                    )
+                    for sample_id in sorted(train_ids | validation_ids)
+                }
+
+            sample_manifest = []
+            sequence_files = []
+            for example in examples:
+                sample = samples[example.sample_id]
+                sequence_buffer = io.BytesIO()
+                np.save(sequence_buffer, example.sequence, allow_pickle=False)
+                sequence_bytes = sequence_buffer.getvalue()
+                sequence_path = f"sequences/{example.sample_id}.npy"
+                sequence_files.append((sequence_path, sequence_bytes))
+                sample_manifest.append({
+                    "sample_id": example.sample_id,
+                    "entry_id": example.entry_id,
+                    "label_id": example.label_id,
+                    "label": example.label,
+                    "scope": scope,
+                    "session_id": example.session_id,
+                    "created_at": sample.created_at,
+                    "path": sequence_path,
+                    "shape": list(SEQUENCE_SHAPE),
+                    "dtype": "float32",
+                    "preprocessing_version": example.preprocessing_version,
+                    "sha256": hashlib.sha256(sequence_bytes).hexdigest(),
+                    "split": split_assignments.get(example.sample_id),
+                })
+
+        dataset_manifest = {
+            "schema_version": 1,
+            "format": "isl-sequence-dataset-v1",
+            "scope": scope,
+            "preprocessing_version": PREPROCESSING_VERSION,
+            "sequence_shape": list(SEQUENCE_SHAPE),
+            "dtype": "float32",
+            "fingerprint_algorithm": (
+                "sha256-sorted-sample-id-canonical-float32-v1"
+            ),
+            "dataset_fingerprint": dataset_fingerprint(examples),
+            "labels_file": "labels.json",
+            "sample_count": len(sample_manifest),
+            "sessions": session_manifest,
+            "training_ready": training_ready,
+            "evaluation_ready": evaluation_ready,
+            "split": {
+                "version": 1,
+                "method": "capture-session-grouped",
+                "seed": 42,
+                "validation_fraction": VALIDATION_FRACTION,
+                "unit": "session_id",
+                "minimum_train_sessions_per_label": MIN_TRAIN_SESSIONS_PER_CLASS,
+                "minimum_evaluation_sessions_per_label": (
+                    MIN_EVALUATION_SESSIONS_PER_CLASS
+                ),
+                "train_sessions": split.train_sessions if evaluation_ready else {},
+                "validation_sessions": (
+                    split.validation_sessions if evaluation_ready else {}
+                ),
+                "insufficiencies": sorted(set(
+                    split.insufficiencies
+                    + tuple(
+                        f"{label}: no saved examples."
+                        for label in missing_labels
+                    )
+                )),
+            },
+            "samples": sample_manifest,
+        }
+
+        archive_buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            archive_buffer, mode="w", compression=zipfile.ZIP_DEFLATED
+        ) as archive:
+            for name, payload in (
+                ("labels.json", label_manifest),
+                ("dataset.json", dataset_manifest),
+            ):
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(
+                    info,
+                    json.dumps(
+                        payload, ensure_ascii=False, indent=2
+                    ).encode("utf-8") + b"\n",
+                )
+            for name, payload in sequence_files:
+                info = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                archive.writestr(info, payload)
+        archive_buffer.seek(0)
+    except (ArtifactCompatibilityError, OSError, ValueError, KeyError) as error:
+        return jsonify({"error": str(error)}), 422
+
+    return send_file(
+        archive_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"isl-{scope}-dataset.zip",
+    )
+
+
 @app.route("/developer/api/drafts/<entry_id>/samples", methods=["DELETE"])
 def delete_developer_samples(entry_id):
     forbidden = _developer_forbidden_response()
@@ -1738,6 +2536,120 @@ def static_files(filename):
     return send_from_directory(str(FRONTEND_DIR), filename)
 
 
+# ── Sentence Demo Mode Endpoints ───────────────────────────────────────────────
+@app.route("/api/sentence-demo/config", methods=["GET"])
+def get_sentence_demo_config():
+    """Retrieve sentence demo configuration, validation status, and supported labels."""
+    report = SENTENCE_DEMO_MANAGER.validate_current_configuration()
+    with _lock:
+        demo_state = {
+            "enabled": _state.get("sentence_demo_mode", False),
+            "current_sentence": _state.get("sentence_demo_sentence", ""),
+            "current_trigger": _state.get("sentence_demo_trigger", ""),
+        }
+    return jsonify({
+        "status": "ok",
+        "demo_state": demo_state,
+        "config_path": str(SENTENCE_DEMO_MANAGER.config_path),
+        "mappings": SENTENCE_DEMO_MANAGER.load_mappings(),
+        "validation": report,
+        "error": SENTENCE_DEMO_MANAGER._last_load_error,
+    })
+
+
+@app.route("/api/sentence-demo/config", methods=["POST"])
+def update_sentence_demo_config():
+    """Save updated mappings to the configuration file with validation."""
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "Request body must be a JSON object."}), 400
+
+    mappings = data.get("mappings")
+    if mappings is None:
+        return jsonify({"error": "Missing 'mappings' in request body."}), 400
+
+    ok, error_msg = SENTENCE_DEMO_MANAGER.save_mappings(mappings)
+    if not ok:
+        return jsonify({"error": error_msg}), 400
+
+    report = SENTENCE_DEMO_MANAGER.validate_current_configuration()
+    return jsonify({
+        "status": "saved",
+        "mappings": SENTENCE_DEMO_MANAGER.load_mappings(),
+        "validation": report,
+    }), 200
+
+
+@app.route("/api/sentence-demo/reload", methods=["POST"])
+def reload_sentence_demo_config():
+    """Force-reload sentence mappings from disk."""
+    mappings = SENTENCE_DEMO_MANAGER.load_mappings(force=True)
+    report = SENTENCE_DEMO_MANAGER.validate_current_configuration()
+    return jsonify({
+        "status": "reloaded",
+        "mappings": mappings,
+        "validation": report,
+        "error": SENTENCE_DEMO_MANAGER._last_load_error,
+    })
+
+
+@app.route("/api/sentence-demo/speak", methods=["POST"])
+def speak_sentence_demo():
+    """Speak mapped sentence via backend TTS."""
+    data = request.get_json(silent=True) or {}
+    sentence = data.get("sentence", "").strip()
+    if not sentence:
+        return jsonify({"error": "Empty sentence cannot be spoken."}), 400
+    with _lock:
+        lang_code = data.get("lang_code") or _state.get("lang_code", "en")
+    speak(sentence, lang_code)
+    return jsonify({"status": "queued", "sentence": sentence, "lang_code": lang_code})
+
+
+@app.route("/api/sentence-demo/trigger", methods=["POST"])
+def trigger_sentence_demo():
+    """Trigger a demo mapping from a verified sign recognition event."""
+    data = request.get_json(silent=True) or {}
+    label = data.get("label", "").strip()
+    if not label:
+        return jsonify({"error": "Missing 'label'."}), 400
+
+    confidence = data.get("confidence", 1.0)
+    speak_audio = data.get("speak", True)
+    min_confidence = float(data.get("min_confidence", 0.55))
+
+    if confidence < min_confidence:
+        return jsonify({
+            "triggered": False,
+            "reason": f"Confidence {confidence:.2f} below threshold {min_confidence:.2f}",
+        }), 200
+
+    mapping = SENTENCE_DEMO_MANAGER.lookup_sentence(label)
+    if not mapping:
+        return jsonify({
+            "triggered": False,
+            "sign": label,
+            "reason": f"No sentence mapping configured for sign '{label}'.",
+        }), 200
+
+    with _lock:
+        now = time.time()
+        _state["sentence_demo_sentence"] = mapping["sentence"]
+        _state["sentence_demo_trigger"] = label
+        _state["sentence_demo_trigger_time"] = now
+        lang_code = _state.get("lang_code", "en")
+
+    if speak_audio:
+        speak(mapping["sentence"], lang_code)
+
+    return jsonify({
+        "triggered": True,
+        "sign": mapping["matched_sign"],
+        "sentence": mapping["sentence"],
+        "spoken": speak_audio,
+    })
+
+
 @app.route("/video_feed")
 def video_feed():
     """MJPEG stream — point an <img> tag at this endpoint."""
@@ -1770,6 +2682,9 @@ def status():
             "in_cooldown":        s.get("in_cooldown", False),
             "lang_code":          s["lang_code"],
             "lang_name":          LANGUAGES.get(s["lang_code"], "English"),
+            "sentence_demo_mode": s.get("sentence_demo_mode", False),
+            "sentence_demo_sentence": s.get("sentence_demo_sentence", ""),
+            "sentence_demo_trigger": s.get("sentence_demo_trigger", ""),
         })
 
 
@@ -1829,6 +2744,22 @@ def control():
                 _do_finalize(s, now)
             elif s["completed_sentence"]:
                 speak(s["completed_sentence"], s["lang_code"])
+
+        elif action == "set_sentence_demo_mode":
+            mode_enabled = bool(data.get("enabled", False))
+            s["sentence_demo_mode"] = mode_enabled
+            if not mode_enabled:
+                s["sentence_demo_sentence"] = ""
+                s["sentence_demo_trigger"] = ""
+
+        elif action == "clear_sentence_demo":
+            s["sentence_demo_sentence"] = ""
+            s["sentence_demo_trigger"] = ""
+
+        elif action == "speak_sentence_demo":
+            sentence = data.get("sentence") or s.get("sentence_demo_sentence", "")
+            if sentence:
+                speak(sentence, s["lang_code"])
 
         elif action == "clear":
             s["sentence_words"]     = []

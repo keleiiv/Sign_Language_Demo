@@ -14,6 +14,7 @@ import re
 import shutil
 import sys
 import uuid
+import unicodedata
 
 import numpy as np
 
@@ -38,6 +39,7 @@ LEARNING_RATE = 0.01
 EPOCHS = 400
 L2_STRENGTH = 0.01
 ABSTENTION_THRESHOLD = 0.55
+MIN_BUILTIN_TRAIN_SESSIONS = MIN_EVALUATION_SESSIONS_PER_CLASS
 
 
 class InsufficientDataError(ValueError):
@@ -56,6 +58,170 @@ class SplitResult:
     validation_sessions: dict[str, tuple[str, ...]]
     evaluation_ready: bool
     insufficiencies: tuple[str, ...]
+
+
+def canonical_label_key(label: str) -> str:
+    """Normalize labels only for matching; retain the catalog spelling."""
+    if not isinstance(label, str) or not label.strip():
+        raise ValueError("Vocabulary labels must be non-empty strings.")
+    return " ".join(unicodedata.normalize("NFKC", label).split()).casefold()
+
+
+def validate_label_map(label_map: list[dict], scope: str | None = None) -> None:
+    """Reject reused IDs and duplicate canonical labels in model mappings."""
+    if not isinstance(label_map, list) or not label_map:
+        raise ArtifactCompatibilityError("Artifact label map is empty or invalid.")
+    ids = []
+    labels = []
+    for item in label_map:
+        if not isinstance(item, dict):
+            raise ArtifactCompatibilityError("Artifact label map contains an invalid entry.")
+        label_id, label = item.get("label_id"), item.get("label")
+        if type(label_id) is not int or label_id < 0 or not isinstance(label, str) or not label.strip():
+            raise ArtifactCompatibilityError("Artifact label map contains an invalid ID or label.")
+        if scope is not None and item.get("scope") != scope:
+            raise ArtifactCompatibilityError("Artifact label map scope mismatch.")
+        ids.append(label_id)
+        labels.append(canonical_label_key(label))
+    if len(ids) != len(set(ids)) or len(labels) != len(set(labels)):
+        raise ArtifactCompatibilityError("Artifact label map contains duplicate IDs or canonical labels.")
+
+
+def label_map_fingerprint(label_map: list[dict]) -> str:
+    payload = json.dumps(label_map, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def build_integrated_training_data(
+    vocabulary_store: VocabularyStore,
+    builtin_store,
+    scope: str,
+    builtin_labels: list[str],
+) -> dict:
+    """Combine eligible shared built-in sequences and draft sequences.
+
+    Built-in classes need four independent saved sessions; drafts retain the
+    existing two-session training minimum. No VocabularyEntry is created for
+    built-ins, and personal-scope examples remain isolated.
+    """
+    if scope not in {"shared", "personal"}:
+        raise ValueError("scope must be shared or personal")
+    examples = []
+    excluded = []
+    sources: dict[str, set[str]] = defaultdict(set)
+    labels_by_key: dict[str, tuple[int, str]] = {}
+
+    canonical_builtins = sorted(builtin_labels)
+    builtin_ids = {}
+    for label_id, label in enumerate(canonical_builtins):
+        key = canonical_label_key(label)
+        if key in builtin_ids:
+            raise ValueError(f"Built-in vocabulary has duplicate canonical label: {label}")
+        builtin_ids[key] = (label_id, label)
+        labels_by_key[key] = (label_id, label)
+
+    draft_examples = vocabulary_store.load_training_examples(scope)
+    draft_groups: dict[str, list[TrainingExample]] = defaultdict(list)
+    draft_labels: dict[str, tuple[int, str]] = {}
+    for example in draft_examples:
+        key = canonical_label_key(example.label)
+        existing = draft_labels.get(key)
+        if existing and existing != (example.label_id, example.label):
+            raise ValueError(f"Draft vocabulary has duplicate canonical label: {example.label}")
+        draft_labels[key] = (example.label_id, example.label)
+        draft_groups[key].append(example)
+
+    builtin_groups: dict[str, list[TrainingExample]] = defaultdict(list)
+    if scope == "shared":
+        for sample in builtin_store.list_samples():
+            key = canonical_label_key(sample.label)
+            if key not in builtin_ids:
+                raise ValueError(f"Built-in sample refers to an unknown label: {sample.label}")
+            label_id, canonical_label = builtin_ids[key]
+            sequence = builtin_store.load_sample(sample)
+            builtin_groups[key].append(TrainingExample(
+                sequence=sequence,
+                label_id=label_id,
+                label=canonical_label,
+                scope="shared",
+                entry_id=f"builtin:{key}",
+                session_id=f"builtin:{sample.session_id}",
+                sample_id=f"builtin:{sample.sample_id}",
+                preprocessing_version=sample.preprocessing_version,
+            ))
+
+    for key, group in draft_groups.items():
+        draft_id, draft_label = draft_labels[key]
+        if key in builtin_ids:
+            label_id, label = builtin_ids[key]
+        else:
+            label_id, label = draft_id, draft_label
+            labels_by_key[key] = (label_id, label)
+        session_count = len({item.session_id for item in group})
+        if session_count < MIN_TRAIN_SESSIONS_PER_CLASS:
+            excluded.append({
+                "label": label,
+                "source": "draft",
+                "sample_count": len(group),
+                "session_count": session_count,
+                "minimum_sessions": MIN_TRAIN_SESSIONS_PER_CLASS,
+                "reason": "insufficient independent recording sessions",
+            })
+            continue
+        for item in group:
+            examples.append(TrainingExample(
+                sequence=item.sequence,
+                label_id=label_id,
+                label=label,
+                scope=item.scope,
+                entry_id=item.entry_id,
+                session_id=f"draft:{item.session_id}",
+                sample_id=f"draft:{item.sample_id}",
+                preprocessing_version=item.preprocessing_version,
+            ))
+        sources[key].add("draft")
+
+    if scope == "shared":
+        for key, group in builtin_groups.items():
+            label_id, label = builtin_ids[key]
+            session_count = len({item.session_id for item in group})
+            if session_count < MIN_BUILTIN_TRAIN_SESSIONS:
+                excluded.append({
+                    "label": label,
+                    "source": "built-in",
+                    "sample_count": len(group),
+                    "session_count": session_count,
+                    "minimum_sessions": MIN_BUILTIN_TRAIN_SESSIONS,
+                    "reason": "insufficient independent recording sessions",
+                })
+                continue
+            examples.extend(group)
+            sources[key].add("built-in")
+
+    active_keys = {canonical_label_key(item.label) for item in examples}
+    label_map = []
+    for key in sorted(active_keys, key=lambda value: (labels_by_key[value][0], value)):
+        label_id, label = labels_by_key[key]
+        label_map.append({
+            "label_id": label_id,
+            "label": label,
+            "scope": scope,
+            "source": "+".join(sorted(sources[key])),
+        })
+    if label_map:
+        validate_label_map(label_map, scope=scope)
+    return {
+        "examples": examples,
+        "label_map": label_map,
+        "excluded_labels": excluded,
+        "source_sample_counts": {
+            source: sum(1 for item in examples if item.sample_id.startswith(f"{source}:"))
+            for source in ("builtin", "draft")
+        },
+        "dataset_mode": "built-in-and-draft" if scope == "shared" else "draft-only",
+        "source_fingerprints": source_dataset_fingerprints(examples),
+        "mapping_fingerprint": label_map_fingerprint(label_map),
+    }
 
 
 def temporal_features(sequence) -> np.ndarray:
@@ -306,16 +472,42 @@ def dataset_fingerprint(examples: list[TrainingExample]) -> str:
     return digest.hexdigest()
 
 
+def source_dataset_fingerprints(examples: list[TrainingExample]) -> dict[str, str]:
+    """Fingerprint built-in and draft source sequences independently."""
+    groups = {"builtin": [], "draft": []}
+    for example in examples:
+        source = "builtin" if example.sample_id.startswith("builtin:") else "draft"
+        groups[source].append(example)
+    return {
+        source: dataset_fingerprint(group)
+        for source, group in groups.items()
+        if group
+    }
+
+
 def train_and_evaluate(
     store: VocabularyStore,
     scope: str,
     seed: int = 42,
     unknown_sequences: list[tuple[str, np.ndarray]] | None = None,
     promote: bool = False,
+    examples: list[TrainingExample] | None = None,
+    label_map: list[dict] | None = None,
+    dataset_details: dict | None = None,
 ) -> dict:
-    examples = store.load_training_examples(scope)
+    examples = list(examples if examples is not None else store.load_training_examples(scope))
     if not examples:
         raise InsufficientDataError(f"No saved {scope} examples are available.")
+    actual_source_fingerprints = source_dataset_fingerprints(examples)
+    if dataset_details and dataset_details.get("source_fingerprints") != actual_source_fingerprints:
+        raise ArtifactCompatibilityError(
+            "Provided source fingerprints do not match the training sequences."
+        )
+    dataset_mode = (dataset_details or {}).get("dataset_mode", "draft-only")
+    if "builtin" in actual_source_fingerprints and dataset_mode != "built-in-and-draft":
+        raise ArtifactCompatibilityError(
+            "Built-in samples require the integrated dataset mode."
+        )
     split = split_by_session(examples, seed=seed)
     if not split.train_indices:
         details = "; ".join(split.insufficiencies)
@@ -328,10 +520,20 @@ def train_and_evaluate(
         previous = labels_by_id.setdefault(example.label_id, example.label)
         if previous != example.label:
             raise ValueError(f"Conflicting labels for label ID {example.label_id}")
-    label_map = [
-        {"label_id": label_id, "label": labels_by_id[label_id]}
-        for label_id in sorted(labels_by_id)
-    ]
+    if label_map is None:
+        label_map = [
+            {"label_id": label_id, "label": labels_by_id[label_id], "scope": scope}
+            for label_id in sorted(labels_by_id)
+        ]
+    else:
+        label_map = [dict(item) for item in label_map]
+    if {
+        (item.get("label_id"), item.get("label")) for item in label_map
+    } != set(labels_by_id.items()):
+        raise ArtifactCompatibilityError(
+            "Provided label map does not exactly match the training examples."
+        )
+    validate_label_map(label_map, scope=scope)
     id_to_target = {item["label_id"]: index
                     for index, item in enumerate(label_map)}
 
@@ -373,8 +575,15 @@ def train_and_evaluate(
         "data": {
             "total_samples": len(examples),
             "fingerprint": dataset_fingerprint(examples),
+            "source_fingerprints": actual_source_fingerprints,
             "train_samples": len(split.train_indices),
             "validation_samples": len(split.validation_indices),
+            "label_map_fingerprint": label_map_fingerprint(label_map),
+            "source_sample_counts": (dataset_details or {}).get("source_sample_counts", {
+                "draft": len(examples),
+            }),
+            "excluded_labels": (dataset_details or {}).get("excluded_labels", []),
+            "dataset_mode": (dataset_details or {}).get("dataset_mode", "draft-only"),
             "class_session_counts": {
                 label: len({
                     example.session_id for example in examples
@@ -389,6 +598,7 @@ def train_and_evaluate(
             if split.evaluation_ready else "insufficient independent sessions"
         ),
         "insufficiencies": list(split.insufficiencies),
+        "label_map": label_map,
         "validation": None,
         "unknown_evaluation": {
             "available": False,
@@ -520,7 +730,7 @@ def train_and_evaluate(
                     "mean differences"
                 ),
             },
-            "label_map": [{**item, "scope": scope} for item in label_map],
+            "label_map": label_map,
             "parameters_file": parameters_path.name,
             "parameters_sha256": _sha256(parameters_path),
             "training": {
@@ -537,6 +747,7 @@ def train_and_evaluate(
         _atomic_json(label_map_path, {
             "schema_version": CLASSIFIER_VERSION,
             "scope": scope,
+            "fingerprint": label_map_fingerprint(metadata["label_map"]),
             "label_map": metadata["label_map"],
         })
         _atomic_json(preprocessing_path, {
@@ -602,6 +813,13 @@ def activate_artifact(store: VocabularyStore, scope: str, artifact_id: str) -> P
     metadata = _load_manifest(metadata_path)
     if metadata.get("scope") != scope:
         raise ArtifactCompatibilityError("Artifact belongs to a different scope.")
+    validate_label_map(metadata.get("label_map"), scope=scope)
+    expected_mapping = label_map_fingerprint(metadata["label_map"])
+    saved_mapping = metadata.get("training", {}).get("data", {}).get(
+        "label_map_fingerprint"
+    )
+    if saved_mapping and saved_mapping != expected_mapping:
+        raise ArtifactCompatibilityError("Artifact label mapping fingerprint mismatch.")
     parameters_path = artifact_dir / metadata["parameters_file"]
     if _sha256(parameters_path) != metadata.get("parameters_sha256"):
         raise ArtifactCompatibilityError("Artifact parameter checksum mismatch.")
@@ -674,6 +892,38 @@ def load_artifact(
     metadata = _load_manifest(artifact_dir / "metadata.json")
     if metadata.get("scope") != scope:
         raise ArtifactCompatibilityError("Artifact belongs to a different scope.")
+    validate_label_map(metadata.get("label_map"), scope=scope)
+    mapping_fingerprint = label_map_fingerprint(metadata["label_map"])
+    stored_fingerprint = metadata.get("training", {}).get("data", {}).get(
+        "label_map_fingerprint"
+    )
+    if stored_fingerprint and stored_fingerprint != mapping_fingerprint:
+        raise ArtifactCompatibilityError("Artifact label mapping fingerprint mismatch.")
+    source_fingerprints = metadata.get("training", {}).get("data", {}).get(
+        "source_fingerprints"
+    )
+    if source_fingerprints is not None and (
+        not isinstance(source_fingerprints, dict)
+        or not source_fingerprints
+        or any(
+            source not in {"builtin", "draft"}
+            or not isinstance(fingerprint, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", fingerprint)
+            for source, fingerprint in source_fingerprints.items()
+        )
+    ):
+        raise ArtifactCompatibilityError("Artifact source fingerprints are invalid.")
+    label_map_path = artifact_dir / "label_map.json"
+    if label_map_path.is_file():
+        try:
+            label_map_payload = json.loads(label_map_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ArtifactCompatibilityError("Artifact label map cannot be read.") from error
+        if label_map_payload.get("label_map") != metadata["label_map"]:
+            raise ArtifactCompatibilityError("Artifact label map file conflicts with metadata.")
+        file_fingerprint = label_map_payload.get("fingerprint")
+        if file_fingerprint and file_fingerprint != mapping_fingerprint:
+            raise ArtifactCompatibilityError("Artifact label map file fingerprint mismatch.")
     parameters_path = artifact_dir / metadata["parameters_file"]
     if _sha256(parameters_path) != metadata.get("parameters_sha256"):
         raise ArtifactCompatibilityError("Artifact parameter checksum mismatch.")
